@@ -2,8 +2,8 @@
 # Block commits that introduce secrets. Enable with:
 #   git config core.hooksPath .githooks
 if ! command -v betterleaks >/dev/null 2>&1; then
-	echo "betterleaks not installed — skipping secret scan (brew install betterleaks)" >&2
-	exit 0
+	echo "betterleaks not installed" >&2
+	exit 1
 fi
 betterleaks git --staged --redact --no-banner || {
 	echo "betterleaks: secrets detected — commit blocked. Add 'betterleaks:allow' to a line to whitelist it intentionally." >&2
