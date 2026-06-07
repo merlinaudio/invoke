@@ -1,0 +1,55 @@
+[package]
+name = "invoke-cli"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "invoke"
+path = "src/main.rs"
+
+[dependencies]
+backon = { version = "1", default-features = false, features = [
+    "std",
+    "std-blocking-sleep",
+] }
+clap = { version = "4", features = ["derive"] }
+objc2 = "0.6.4"
+objc2-foundation = { version = "0.3.2", features = [
+    "NSDate",
+    "NSPredicate",
+    "NSString",
+] }
+objc2-os-log = "0.3.2"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+
+# Core crates
+common = { path = "../crates/common", default-features = false, features = [
+    "accessibility",
+    "serde",
+    "process",
+] }
+hid = { path = "../crates/hid", default-features = false, features = ["serde"] }
+
+# Orchestrator (only used by `invoke listen`): the pack engine + the macOS launcher.
+invoke = { path = "../crates/invoke" }
+pack-launch-macos = { path = "../crates/pack-launch-macos" }
+tokio = { version = "1", features = [
+    "rt-multi-thread",
+    "net",
+    "io-util",
+    "sync",
+    "time",
+    "macros",
+] }
+objc2-core-foundation = "0.3.2"
+log = "0.4"
+service-manager = "0.11.0"
+
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

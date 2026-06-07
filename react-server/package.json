@@ -1,0 +1,17 @@
+{
+	"name": "@merlin.audio/react-flight",
+	"version": "0.0.0",
+	"description": "Minimal React Server Components (Flight) server/client wrappers",
+	"type": "module",
+	"exports": {
+		"./server": "./server.ts",
+		"./client": "./client.ts",
+		"./flight": "./flight.ts"
+	},
+	"dependencies": {
+		"react-server-dom-webpack": "^19.3.0-canary-fef12a01-20260413"
+	},
+	"peerDependencies": {
+		"react": "^19.3.0-canary-fef12a01-20260413"
+	}
+}

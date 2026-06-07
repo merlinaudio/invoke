@@ -1,0 +1,5 @@
+{
+	"name": "inv3-open",
+	"private": true,
+	"workspaces": ["runtime/bun", "react-server"]
+}

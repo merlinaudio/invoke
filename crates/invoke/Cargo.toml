@@ -1,0 +1,48 @@
+[package]
+name = "invoke"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["lib"]
+
+[dependencies]
+common = { version = "0.1.0", path = "../common", features = [
+    "pending",
+    "schemars",
+    "serde",
+    "specta",
+] }
+env_logger = "0.11.8"
+hid = { version = "0.1.0", path = "../hid", features = [
+    "schemars",
+    "serde",
+    "specta",
+] }
+log = "0.4.28"
+objc2 = "0.6.3"
+objc2-app-kit = { version = "0.3.2", features = [
+    "NSPasteboard",
+    "NSPasteboardItem",
+    "block2",
+] }
+objc2-application-services = "0.3.2"
+objc2-core-foundation = "0.3.2"
+objc2-foundation = "0.3.2"
+observer = { version = "0.1.0", path = "../observer", features = [
+    "serde",
+    "specta",
+] }
+json-template = { version = "0.1.0", path = "../json-template" }
+papaya = { version = "0.2.3", features = ["serde"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.145"
+smallvec = "1.15.1"
+specta = { version = "2.0.0-rc.25", features = ["serde_json"] }
+tokio = { version = "1.48.0", features = ["time", "net", "io-util", "rt", "sync", "macros"] }
+block2 = "0.6.2"
+
+
+[profile.release]
+lto = true
+strip = "symbols"

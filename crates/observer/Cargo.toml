@@ -1,0 +1,51 @@
+[package]
+name = "observer"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+block2 = { version = "0.6.1", optional = true }
+coremidi = { version = "0.9.0", optional = true }
+hid = { version = "0.1.0", path = "../hid", features = ["serde"] }
+log = "0.4.27"
+midi2 = { version = "0.11.1", default-features = false, features = [
+    "std",
+    "utility",
+    "system-common",
+    "channel-voice1",
+    "channel-voice2",
+    "sysex7",
+    "sysex8",
+    "flex-data",
+    "ump-stream",
+], optional = true }
+objc2 = { version = "0.6.1", optional = true }
+objc2-app-kit = { version = "0.3.1", optional = true }
+objc2-application-services = { version = "0.3.1", optional = true }
+objc2-core-foundation = { version = "0.3.1", optional = true }
+objc2-core-graphics = { version = "0.3.1", optional = true }
+objc2-foundation = { version = "0.3.1", optional = true }
+serde = { version = "1.0.219", optional = true, features = ["derive"] }
+thiserror = "2.0.12"
+common = { version = "0.1.0", path = "../common" }
+serde_json = { version = "1.0.145", optional = true }
+specta = { version = "=2.0.0-rc.25", optional = true, features = ["derive"] }
+smallvec = "1.15.1"
+
+[features]
+default = ["eventtap", "accessibility", "workspace", "midi"]
+eventtap = [
+    "dep:objc2-core-graphics",
+    "dep:objc2-core-foundation",
+    "dep:objc2-application-services",
+]
+accessibility = ["dep:objc2-application-services"]
+workspace = [
+    "dep:objc2-app-kit",
+    "dep:objc2",
+    "dep:objc2-foundation",
+    "dep:block2",
+]
+midi = ["dep:coremidi", "dep:midi2"]
+serde = ["dep:serde", "dep:serde_json"]
+specta = ["dep:specta"]

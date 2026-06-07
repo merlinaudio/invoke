@@ -1,0 +1,8 @@
+{
+	"name": "invoke",
+	"types": "./invoke.d.ts",
+	"exports": {
+		".": { "types": "./invoke.d.ts" },
+		"./ui": { "types": "./invoke-ui.d.ts" }
+	}
+}
