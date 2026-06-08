@@ -102,7 +102,12 @@ impl Filter {
 				let children = element.children()?;
 				for filter in filters {
 					for child in &children {
-						if filter.matches(&mut Element::new(child))? {
+						// A child that lacks the attribute being matched (e.g. an id-less
+						// group when filtering by identifier) makes `matches` return an AX
+						// error. That just means this child doesn't match — keep looking,
+						// don't abort the whole search. Same tolerance `walk` applies to
+						// candidates at the top level.
+						if filter.matches(&mut Element::new(child)).unwrap_or(false) {
 							return Ok(true);
 						}
 					}

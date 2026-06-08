@@ -21,14 +21,14 @@ trait ToResult {
 
 impl ToResult for AXError {
 	fn to_result(self) -> Result<(), Error> {
-		if self != AXError::Success { Err(Error::AX(self.0)) } else { Ok(()) }
+		if self != AXError::Success { Err(Error::AX(self)) } else { Ok(()) }
 	}
 }
 
 #[derive(Debug, Error)]
 pub enum Error {
-	#[error("AXError: {0}")]
-	AX(i32),
+	#[error("AXError: {}", .0.0)]
+	AX(AXError),
 
 	#[error("OS failed to copy data to pointer, or we couldn't read copied data from pointer")]
 	PointerError,

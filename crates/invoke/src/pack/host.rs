@@ -4,6 +4,7 @@ use std::{
 };
 
 use common::main_thread::MainThread;
+use objc2_application_services::AXError;
 use serde_json::Value;
 
 use crate::{
@@ -222,13 +223,24 @@ impl Host {
 				.map(Into::into),
 
 			GetElementAttribute { element, attribute } => MainThread::run(move || {
-				instruction::GetAttribute {
+				match (instruction::GetAttribute {
 					element,
 					attribute,
 					allow_cached: true,
-				}
+				})
 				.run()
-				.map(|v| accessibility_value_to_json(&v))
+				{
+					Ok(v) => Ok(accessibility_value_to_json(&v)),
+					// NoValue means the attribute exists but has no value right now
+					// (a date-separator row has no description, say).
+					//
+					// Return null rather than erroring,
+					// so packs reading optional attributes don't have to wrap every read in try/catch.
+					//
+					// Real errors still propagate.
+					Err(instruction::Error::Element(common::accessibility::element::Error::AX(AXError::NoValue))) => Ok(Value::Null),
+					Err(e) => Err(e),
+				}
 			})
 			.await
 			.map_err(|e| format!("{e:?}")),
