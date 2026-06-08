@@ -118,7 +118,9 @@ export class AppDelegate {
 		this.#delegate = new ElementDelegate(this, undefined, app.element);
 	}
 
-	walk = ((...args) => this.#app.element!.then(el => el.walk(...args))) as Element["walk"];
+	// Walking zero steps lands on the app itself. Without this, an empty walk returns
+	// null and the app-root delegate latches dead after one failed read.
+	walk = ((...args) => (args.length > 0 ? this.#app.element!.then(el => el.walk(...args)) : this.#app.element!)) as Element["walk"];
 
 	get key() {
 		return this.#app.key;
@@ -137,12 +139,24 @@ export class AppDelegate {
 	// so forward them through — otherwise a pack's `app.onactivate = …` lands on
 	// the wrapper and is never called. macOS won't re-fire focus notifications when
 	// you switch INTO an app, so packs use `onactivate` to re-evaluate focus.
-	get onactivate() { return this.#app.onactivate; }
-	set onactivate(fn) { this.#app.onactivate = fn; }
-	get ondeactivate() { return this.#app.ondeactivate; }
-	set ondeactivate(fn) { this.#app.ondeactivate = fn; }
-	get onterminate() { return this.#app.onterminate; }
-	set onterminate(fn) { this.#app.onterminate = fn; }
+	get onactivate() {
+		return this.#app.onactivate;
+	}
+	set onactivate(fn) {
+		this.#app.onactivate = fn;
+	}
+	get ondeactivate() {
+		return this.#app.ondeactivate;
+	}
+	set ondeactivate(fn) {
+		this.#app.ondeactivate = fn;
+	}
+	get onterminate() {
+		return this.#app.onterminate;
+	}
+	set onterminate(fn) {
+		this.#app.onterminate = fn;
+	}
 
 	get elementBusy() {
 		return this.#delegate.attribute.elementBusy;
