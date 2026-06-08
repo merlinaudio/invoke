@@ -70,23 +70,23 @@ unsafe extern "C-unwind" fn INVAccessibilityObserverCallback(
 ) {
 	log::info!("Accessibility observer callback: {element:?}, {notification:?}, {info:?}, {refcon:?}");
 
-	let handle = refcon as usize as NotificationRegistrationHandle;
-
-	let known_notifications = KNOWN_NOTIFICATIONS.pin();
-	let Some(notification_registration) = known_notifications.get(&handle) else {
-		log::error!("Notification registration not found for handle: {handle}");
-		return;
-	};
+	// When we register, we pass the element handle to macOS as the refcon.
+	// macOS hands it back here, along with the notification name.
+	// So we can look up every subscriber watching this element for this notification.
+	let element_handle = ElementHandle::from(refcon as usize as u32);
 
 	unsafe {
+		let notification: Notification = notification.as_ref().to_string().parse().unwrap();
+
 		// macOS passes NULL info for most notifications (focusedUIElementChanged,
 		// valueChanged, etc.). The objc2 binding incorrectly types this as NonNull —
 		// Apple's C header is `CFDictionaryRef` which is nullable. Round-trip through
 		// usize to strip the nonnull invariant so the null check isn't optimized away.
 		let info_ptr = info.as_ptr() as usize as *const CFDictionary;
+
 		let event = Event::Notification {
 			element,
-			name: notification.as_ref().to_string().parse().unwrap(),
+			name: notification.clone(),
 			info: if info_ptr.is_null() {
 				None
 			} else {
@@ -94,7 +94,18 @@ unsafe extern "C-unwind" fn INVAccessibilityObserverCallback(
 			},
 		};
 
-		notification_registration.on_event.call((event,));
+		// Collect the matching subscribers before we call them.
+		// Otherwise we would be reading the map while a handler adds or removes a subscription.
+		let subscribers: Vec<_> = KNOWN_NOTIFICATIONS
+			.pin()
+			.iter()
+			.filter(|(_, reg)| reg.element_handle == element_handle && reg.notification == notification)
+			.map(|(_, reg)| reg.clone())
+			.collect();
+
+		for subscriber in subscribers {
+			subscriber.on_event.call((&event,));
+		}
 	}
 }
 
@@ -108,7 +119,7 @@ pub fn get_element_handle_for_registration(handle: NotificationRegistrationHandl
 struct NotificationRegistration {
 	element_handle: ElementHandle,
 	notification: Notification,
-	on_event: Box<dyn Fn(Event) + Send + Sync>,
+	on_event: Box<dyn Fn(&Event) + Send + Sync>,
 }
 
 pub struct AccessibilityObserver {
@@ -162,42 +173,47 @@ impl ToResult for AXError {
 	}
 }
 
+const AX_ERROR_NOTIFICATION_ALREADY_REGISTERED: i32 = -25209;
+
+// Ask macOS to start sending us this notification.
+// We register once per `(element,notification)` and pass the element handle as the refcon, so the callback can find every subscriber.
+// macOS returns -25209 when it is already registered, which is what we want, so we treat that as success and never track who is first.
+fn register(observer: &CFRetained<AXObserver>, element_handle: ElementHandle, notification: &Notification) -> Result<(), Error> {
+	let element = element_handle.inner();
+	let element = element.as_ref().ok_or(Error::ElementNotFound)?;
+	let refcon = u32::from(element_handle) as usize as *mut c_void;
+	match unsafe { observer.add_notification(element, &notification.to_CFString(), refcon) }.to_result() {
+		Err(Error::AX(AX_ERROR_NOTIFICATION_ALREADY_REGISTERED)) => Ok(()),
+		result => result,
+	}
+}
+
 impl ObserverGuard<AccessibilityObserver> {
 	pub fn update_pid(&mut self, new_pid: u32) -> Result<(), Error> {
-		if self.inner.pid.is_some_and(|pid| pid == new_pid) {
-			return Ok(());
+		// A new process needs a fresh AXObserver.
+		// The same process keeps its observer, and we just re-register below.
+		if self.inner.pid != Some(new_pid) {
+			match self.sleep() {
+				// There may be no old AXObserver to remove, for example before the app
+				// has launched. That is fine; we are creating the new one.
+				Err(Error::ObserverNotCreated) => Ok(()),
+				res => res,
+			}?;
+
+			self.inner.observer = Some(AccessibilityObserver::create_observer(new_pid)?);
+			self.inner.pid = Some(new_pid);
+			self.listen()?;
 		}
 
-		match self.sleep() {
-			// There may be no old AXObserver to remove, for example before the app
-			// has launched. That is fine; update_pid is about creating the new one.
-			Err(Error::ObserverNotCreated) => Ok(()),
-			res => res,
-		}?;
-
-		let observer = AccessibilityObserver::create_observer(new_pid)?;
-
-		for (handle, reg) in self.inner.notifications.iter() {
-			let element = reg.element_handle.inner();
-			let element = element.as_ref().ok_or(Error::ElementNotFound)?;
-
-			let notification_cfstring = reg.notification.to_CFString();
-
-			unsafe { observer.add_notification(element, &notification_cfstring, *handle as usize as *mut c_void) }
-				.to_result()
-				.inspect_err(|e| {
-					log::error!(
-						"Failed to add notification {:?} to {:?} (element={element:?}): {e:?}",
-						reg.notification,
-						reg.element_handle,
-					)
-				})?;
+		// Register our notifications with the observer.
+		// macOS can refuse one right after the app launches, with -25204.
+		// This runs on every activation, so a refused one is retried once macOS is ready.
+		// register() is idempotent, so already-registered ones are fine.
+		let Some(observer) = &self.inner.observer else { return Ok(()) };
+		for r in self.inner.notifications.values() {
+			_ = register(observer, r.element_handle, &r.notification)
+				.inspect_err(|e| log::error!("Failed to register {:?} on {:?}: {e:?}", r.notification, r.element_handle));
 		}
-
-		self.inner.observer = Some(observer);
-		self.inner.pid = Some(new_pid);
-
-		self.listen()?;
 
 		Ok(())
 	}
@@ -206,54 +222,51 @@ impl ObserverGuard<AccessibilityObserver> {
 		&mut self,
 		element_handle: ElementHandle,
 		notification: Notification,
-		on_event: Box<dyn Fn(Event) + Send + Sync>,
+		on_event: Box<dyn Fn(&Event) + Send + Sync>,
 	) -> Result<NotificationRegistrationHandle, Error> {
 		let registration = Arc::new(NotificationRegistration {
 			element_handle,
 			notification: notification.clone(),
 			on_event,
 		});
-
 		let handle = KNOWN_NOTIFICATIONS.insert(registration.clone());
-
 		self.inner.notifications.insert(handle, registration);
 
-		log::info!("Observing {notification:?} for {element_handle:?} (observer={:?})", self.inner.observer);
-
-		// The important part already happened above:
-		// inner.notifications and KNOWN_NOTIFICATIONS now remember this request.
-		//
-		// Try to attach it to the current AXObserver too, but do not fail the
-		// whole call if macOS says no right now. Some elements only become
-		// observable later, and update_pid retries stored notifications.
-		if let Some(observer) = &self.inner.observer
-			&& let Some(element) = element_handle.inner().as_ref()
-		{
-			_ = unsafe { observer.add_notification(element, &notification.to_CFString(), handle as usize as *mut c_void) }
-				.to_result()
-				.inspect_err(|e| log::error!("Failed to add notification {notification:?} to {element_handle:?} (element={element:?}): {e:?}",));
+		// macOS sends every event to our one callback, which passes it to all the subscribers.
+		// macOS can refuse right after the app launches. update_pid registers again when the app next activates.
+		if let Some(observer) = &self.inner.observer {
+			_ = register(observer, element_handle, &notification)
+				.inspect_err(|e| log::error!("Failed to observe {notification:?} on {element_handle:?}: {e:?}"));
 		}
 
 		Ok(handle)
 	}
 
 	pub fn remove_notification(&mut self, handle: NotificationRegistrationHandle) -> Result<(), Error> {
-		let known_notifications = KNOWN_NOTIFICATIONS.pin();
-		let registration = known_notifications.remove(&handle).ok_or(Error::NotificationNotFound)?;
+		let registration = KNOWN_NOTIFICATIONS.pin().remove(&handle).cloned().ok_or(Error::NotificationNotFound)?;
 		self.inner.notifications.remove(&handle);
 
-		if let Some(observer) = &self.inner.observer {
-			let ax_error =
-				unsafe { observer.remove_notification(registration.element_handle.inner().as_ref().unwrap(), &registration.notification.to_CFString()) };
+		// While other subscribers still want this (element, notification), leave the macOS registration alone...
+		let others_remain = self
+			.inner
+			.notifications
+			.values()
+			.any(|r| r.element_handle == registration.element_handle && r.notification == registration.notification);
+
+		// ...but if nobody else subscribes (i.e. we just removed the last subscriber),
+		// remove the macOS registration.
+		if !others_remain
+			&& let Some(observer) = &self.inner.observer
+			&& let Some(element) = registration.element_handle.inner().as_ref()
+		{
+			let ax_error = unsafe { observer.remove_notification(element, &registration.notification.to_CFString()) };
 			if ax_error != AXError::Success {
 				log::warn!(
-					"Removed notification for element #{} from our state, but AXObserverRemoveNotification failed: {ax_error:?}",
-					registration.element_handle
+					"Stopped observing {:?} in our state, but AXObserverRemoveNotification failed: {ax_error:?}",
+					registration.notification
 				);
 			}
-		};
-
-		log::info!("Removed notification {:?} from {:?}", registration.notification, self.inner.observer);
+		}
 
 		Ok(())
 	}

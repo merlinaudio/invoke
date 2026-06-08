@@ -78,7 +78,7 @@ pub fn unregister_observer(app_handle: AppHandle) -> Result<(), Error> {
 pub fn observe_element_notification(
 	element_handle: ElementHandle,
 	notification: Notification,
-	on_event: impl Fn(observer::accessibility::Event) + 'static + Send + Sync,
+	on_event: impl Fn(&observer::accessibility::Event) + 'static + Send + Sync,
 ) -> Result<NotificationRegistrationHandle, Error> {
 	let app_handle = {
 		let el = element_handle.inner().ok_or(Error::ElementNotFound)?;

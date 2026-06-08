@@ -198,21 +198,19 @@ mod convert {
 		})
 	}
 	/// Converts an Accessibility Event to JsonValue
-	pub fn accessibility_event_to_json(event: observer::accessibility::Event) -> serde_json::Value {
+	pub fn accessibility_event_to_json(event: &observer::accessibility::Event) -> serde_json::Value {
 		match event {
 			observer::accessibility::Event::Notification { name, element, info } => {
 				let target_handle = retain_element(unsafe { element.as_ref() });
 
-				let info_mapped = info.map(|m| {
-					m.into_iter()
-						.map(|(k, v)| (k, accessibility_value_to_json(&v)))
-						.collect::<HashMap<String, serde_json::Value>>()
-				});
-
 				json!({
-					"name": serde_json::to_value(&name).unwrap(),
+					"name": serde_json::to_value(name).unwrap(),
 					"element": { "#e": target_handle },
-					"info": info_mapped
+					"info": info.as_ref().map(|info|
+						info.iter()
+							.map(|(k, v)| (k.clone(), accessibility_value_to_json(v)))
+							.collect::<HashMap<String, serde_json::Value>>()
+					)
 				})
 			}
 		}
