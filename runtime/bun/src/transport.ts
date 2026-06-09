@@ -87,6 +87,9 @@ export async function start(
 		const args = rest[method];
 		const respond = (status: number, body: unknown) => {
 			if (id != null) write([id, status, body]);
+			// No id. But if there's an error... Fire-and-forget events have no response to carry the error.
+			// Log it so it isn't entirely lost (e.g. a hotkey-triggered function that threw).
+			else if (status === ERROR) console.error(`[pack] ${method} error:`, body);
 		};
 
 		const route = router.routes[method];

@@ -687,12 +687,26 @@ export class ElementDelegate {
 		return async () => (await unregister)?.();
 	}
 
+	// On failure, drop the cached element so the next access re-walks the query,
+	// then rethrow — the caller still has to see this call fail.
 	attribute = new Proxy(this, {
-		get: (target, prop: string) => target.element.then(el => el.attribute[prop as Extract<Attribute, string>]).catch(target.invalidate),
+		get: (target, prop: string) =>
+			target.element
+				.then(el => el.attribute[prop as Extract<Attribute, string>])
+				.catch(e => {
+					target.invalidate();
+					throw e;
+				}),
 	}) as any as Record<Extract<Attribute, string>, Promise<RevivedJsonValue>>;
 
 	action = new Proxy(this, {
-		get: (target, prop: string) => () => target.element.then(el => el.action[prop]!()).catch(target.invalidate),
+		get: (target, prop: string) => () =>
+			target.element
+				.then(el => el.action[prop]!())
+				.catch(e => {
+					target.invalidate();
+					throw e;
+				}),
 	}) as any as Record<string, () => Promise<void>>;
 
 	// ---------------------------------------------------------------------------------------------------------------------

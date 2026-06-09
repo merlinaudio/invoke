@@ -42,7 +42,7 @@ type FunctionHandle = number;
 
 type FunctionInstance = {
 	run(payload: unknown): unknown | Promise<unknown>;
-	end(): void | Promise<void>;
+	end?(): void | Promise<void>;
 };
 
 type AppInstance = {
@@ -100,62 +100,6 @@ export async function resolvePendingAppElement(appHandle: AppHandle) {
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
-// Inbound — requests the host sends us (`PackHandlers` in proto.rs).
-// ---------------------------------------------------------------------------------------------------------------------
-
-const handlers = router().routes({
-	runFunction: handler(async ({ function: functionHandle, payload }: { function: number; payload: unknown }) => {
-		const instance = functions.get(functionHandle);
-		if (!instance) {
-			console.warn(`[pack] runFunction: no function found for ${functionHandle}`);
-			return undefined;
-		}
-		return serialize(await instance.run(deserialize(payload)));
-	}),
-
-	endFunction: handler(({ function: functionHandle }: { function: number }) => {
-		const instance = functions.get(functionHandle);
-		if (!instance) return console.warn(`[pack] endFunction: no function found for ${functionHandle}`);
-		instance.end();
-	}),
-
-	accessibilityNotification: handler(async ({ notification, event }: { notification: number; event: unknown }) => {
-		try {
-			await accessibilityCallbacks.get(notification)?.(event);
-		} catch (e) {
-			console.warn("AX callback error", e);
-		}
-	}),
-
-	workspaceAppActivated: handler(async ({ app }: { app: number }) => {
-		console.log(`App ${app} activated`);
-
-		resolvePendingAppElement(app).catch(e => console.error(`[workspaceAppActivated] Error resolving pending app element for app ${app}`, e));
-
-		await apps.get(app)?.onactivate?.();
-	}),
-
-	workspaceAppDeactivated: handler(async ({ app }: { app: number }) => {
-		console.log(`App ${app} deactivated`);
-
-		Bun.gc(true);
-
-		resolvePendingAppElement(app).catch(e => console.error(`[workspaceAppDeactivated] Error resolving pending app element for app ${app}`, e));
-
-		await apps.get(app)?.ondeactivate?.();
-	}),
-
-	workspaceAppTerminated: handler(async ({ app }: { app: number }) => {
-		console.log(`App ${app} terminated`);
-		await apps.get(app)?.onterminate?.();
-	}),
-
-	renderView: handler(({ view }: { view: number }) => renderRegisteredView(view)),
-
-	runViewAction: handler(({ actionId, args, view }: { actionId: string; args: unknown; view: number }) => runRegisteredAction(actionId, args, view)),
-});
-
-// ---------------------------------------------------------------------------------------------------------------------
 // Transport — set once by `connect()`; the outbound functions below late-bind
 // through it. `id` (the pack's random self-id) is logged on connect.
 // ---------------------------------------------------------------------------------------------------------------------
@@ -163,7 +107,62 @@ const handlers = router().routes({
 let call: Call;
 
 export async function connect(socketPath: string, onClose: () => void) {
-	call = await start(socketPath, handlers, reviver, onClose);
+	call = await start(
+		socketPath,
+
+		// Inbound — requests the host sends us (`PackHandlers` in proto.rs).
+		router().routes({
+			runFunction: handler(async ({ function: functionHandle, payload }: { function: number; payload: unknown }) => {
+				const fn = functions.get(functionHandle);
+				if (!fn) throw new Error(`FunctionNotFound:${functionHandle}`);
+				return serialize(await fn.run(deserialize(payload)));
+			}),
+
+			endFunction: handler(({ function: functionHandle }: { function: number }) => {
+				const fn = functions.get(functionHandle);
+				if (!fn) return console.warn(`[pack] endFunction: no function found for ${functionHandle}`);
+				return fn.end?.();
+			}),
+
+			accessibilityNotification: handler(async ({ notification, event }: { notification: number; event: unknown }) => {
+				try {
+					await accessibilityCallbacks.get(notification)?.(event);
+				} catch (e) {
+					console.warn("AX callback error", e);
+				}
+			}),
+
+			workspaceAppActivated: handler(async ({ app }: { app: number }) => {
+				console.log(`App ${app} activated`);
+
+				resolvePendingAppElement(app).catch(e => console.error(`[workspaceAppActivated] Error resolving pending app element for app ${app}`, e));
+
+				await apps.get(app)?.onactivate?.();
+			}),
+
+			workspaceAppDeactivated: handler(async ({ app }: { app: number }) => {
+				console.log(`App ${app} deactivated`);
+
+				Bun.gc(true);
+
+				resolvePendingAppElement(app).catch(e => console.error(`[workspaceAppDeactivated] Error resolving pending app element for app ${app}`, e));
+
+				await apps.get(app)?.ondeactivate?.();
+			}),
+
+			workspaceAppTerminated: handler(async ({ app }: { app: number }) => {
+				console.log(`App ${app} terminated`);
+				await apps.get(app)?.onterminate?.();
+			}),
+
+			renderView: handler(({ view }: { view: number }) => renderRegisteredView(view)),
+
+			runViewAction: handler(({ actionId, args, view }: { actionId: string; args: unknown; view: number }) => runRegisteredAction(actionId, args, view)),
+		}),
+
+		reviver,
+		onClose,
+	);
 	console.log(`[pack] connected: ${id}`);
 }
 
@@ -190,16 +189,14 @@ export const registerApp = (bundleIdentifier: string) => call("registerApp", { b
 // Tell the host the pack finished its initial load and function registration.
 export const ready = () => call("ready", {}) as Promise<void>;
 
-export const defineFunction = (functionName: string, view: number) =>
-	call("defineFunction", { functionName, view }) as Promise<FunctionHandle | null>;
+export const defineFunction = (functionName: string, view: number) => call("defineFunction", { functionName, view }) as Promise<FunctionHandle | null>;
 
 export const declareVar = (name: string) => call("declareVar", { name }) as Promise<VarHandle | null>;
 export const setVar = (varHandle: VarHandle, value: boolean) => call("setVar", { var: varHandle, value }) as Promise<void>;
 
 export const keyboardKeyDown = (app: AppHandle, key: string, modifiers: number) => call("keyboardKeyDown", { app, key, modifiers }) as Promise<void>;
 export const keyboardKeyUp = (app: AppHandle, key: string, modifiers: number) => call("keyboardKeyUp", { app, key, modifiers }) as Promise<void>;
-export const keyboardKeyPress = (app: AppHandle, key: string, modifiers: number) =>
-	call("keyboardKeyPress", { app, key, modifiers }) as Promise<void>;
+export const keyboardKeyPress = (app: AppHandle, key: string, modifiers: number) => call("keyboardKeyPress", { app, key, modifiers }) as Promise<void>;
 
 export const scrollWheelY = (app: AppHandle, delta: number) => call("scrollWheelY", { app, delta }) as Promise<void>;
 export const scrollWheelX = (app: AppHandle, delta: number) => call("scrollWheelX", { app, delta }) as Promise<void>;

@@ -106,8 +106,11 @@ export class Modifier {
 
 export class Function {
 	#handle: FunctionHandle;
-	#run: (payload: unknown) => unknown | Promise<unknown>;
-	#end?: () => void | Promise<void>;
+
+	// Errors propagate to the transport, which reports them to the host — as an
+	// ERROR response when the run expects one, logged otherwise.
+	run: (payload: unknown) => unknown | Promise<unknown>;
+	end?: () => void | Promise<void>;
 
 	static async init(name: string, run: (payload: unknown) => unknown | Promise<unknown>): Promise<Function>;
 	static async init(name: string, run: (payload: unknown) => unknown | Promise<unknown>, end: () => void | Promise<void>): Promise<Function>;
@@ -141,30 +144,14 @@ export class Function {
 
 	constructor(handle: FunctionHandle, run: (payload: unknown) => unknown | Promise<unknown>, end?: () => void | Promise<void>) {
 		this.#handle = handle;
-		this.#run = run;
-		this.#end = end;
+		this.run = run;
+		this.end = end;
 		rpc.registerFunction(handle, this);
 	}
 
 	get handle() {
 		return this.#handle;
 	}
-
-	run = async (payload: unknown) => {
-		try {
-			return await this.#run(payload);
-		} catch (e) {
-			console.error("[Function.run] error", e);
-		}
-	};
-
-	end = async () => {
-		try {
-			await this.#end?.();
-		} catch (e) {
-			console.error("[Function.end] error", e);
-		}
-	};
 }
 
 type ModifierStr =
