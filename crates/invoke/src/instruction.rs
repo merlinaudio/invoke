@@ -14,6 +14,7 @@ use objc2_core_foundation::{CFBoolean, CFNumber, CFString, CFType, Type};
 pub enum Error {
 	ApplicationNotSet,
 	Element(common::accessibility::element::Error),
+	Walk(common::accessibility::element::WalkError),
 	Hid(hid::Error),
 }
 
@@ -115,7 +116,7 @@ pub enum Mouse {
 // ---------------------------------------------------------------------------------------------------------------------
 
 impl Instruction for Walk {
-	type Value = Result<Option<Element>, Error>;
+	type Value = Result<Element, Error>;
 
 	fn run(&mut self) -> Self::Value {
 		let element: Element = self.root.try_into().map_err(Error::Element)?;
@@ -124,7 +125,7 @@ impl Instruction for Walk {
 			root = self.root,
 			path = self.path
 		);
-		element.walk(&self.path).map_err(Error::Element)
+		element.walk(&self.path).map_err(Error::Walk)
 	}
 }
 

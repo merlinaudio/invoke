@@ -49,6 +49,18 @@ pub enum Error {
 	ElementHandleEmpty,
 }
 
+#[derive(Debug, Error)]
+pub enum WalkError {
+	#[error("walked {matched}/{total} steps, then {error}")]
+	Element { error: Error, matched: usize, total: usize },
+
+	#[error("empty filter path")]
+	EmptyPath,
+
+	#[error("walked {matched}/{total} steps, then no child matched [{step}]")]
+	NoMatch { matched: usize, total: usize, step: String },
+}
+
 /// Represents an element in the macOS Accessibility API.
 #[derive(Debug, Clone)]
 pub struct Element {
@@ -154,7 +166,7 @@ impl Element {
 	///
 	/// let ableton = Element::new_application(ableton_pid)?;
 	///
-	/// let browser_axgroup: Option<Element> = ableton.walk(vec![
+	/// let browser_axgroup: Element = ableton.walk(vec![
 	///     // Go into            window                       not a dialog
 	///     HashSet(Filter::Role("AXWindow"), Filter::Subrole("AXStandardWindow")),
 	///
@@ -188,17 +200,19 @@ impl Element {
 	/// ```
 	///
 	/// the first window will always be chosen, even if it doesn't have a TextField labeled "Track Name".\
-	/// (Returning `None` in that case.)
-	pub fn walk(&self, path: &[FilterStep]) -> Result<Option<Element>, Error> {
+	/// (Failing with [`WalkError::NoMatch`] in that case — the walk commits to the
+	/// first match per step and does not backtrack.)
+	pub fn walk(&self, path: &[FilterStep]) -> Result<Element, WalkError> {
 		// Subtractive (`AND`) list of filters for the current step.
 		// Recursive calls (see below) only happen if there are filters left.
-		// However, packs may hand us an empty path directly, in which case the semantically
-		// correct thing is to return `None`.
-		let Some((current_step_filters, rest)) = path.split_first() else {
-			return Ok(None);
-		};
+		let (current_step_filters, rest) = path.split_first().ok_or(WalkError::EmptyPath)?;
 
-		for child in self.children()? {
+		let children = self.children().map_err(|error| WalkError::Element {
+			error,
+			matched: 0,
+			total: path.len(),
+		})?;
+		for child in children {
 			let mut child = Element::new(&child);
 
 			if current_step_filters.iter().all(|filter| filter.matches(&mut child).unwrap_or(false)) {
@@ -206,18 +220,33 @@ impl Element {
 
 				if rest.is_empty() {
 					// No filters left! This is the element we were looking for.
-					return Ok(Some(child));
+					return Ok(child);
 				} else {
-					// Step into the element and continue walking
-					return child.walk(rest);
+					// Step into the element and continue walking. A failure deeper down
+					// counts the steps from there — add ours so the error reports the
+					// failure point relative to the walk's root.
+					return child.walk(rest).map_err(|e| match e {
+						WalkError::NoMatch { matched, total, step } => WalkError::NoMatch {
+							matched: matched + 1,
+							total: total + 1,
+							step,
+						},
+						WalkError::Element { error, matched, total } => WalkError::Element {
+							error,
+							matched: matched + 1,
+							total: total + 1,
+						},
+						e => e,
+					});
 				}
 			}
 		}
 
-		// No child matched the filters
-		log::debug!("Walk got until element={self:#?} filters={current_step_filters:#?}");
-
-		Ok(None)
+		Err(WalkError::NoMatch {
+			matched: 0,
+			total: path.len(),
+			step: current_step_filters.iter().map(ToString::to_string).collect::<Vec<_>>().join(", "),
+		})
 	}
 
 	pub fn perform_action(&self, action: &Action) -> Result<(), Error> {

@@ -103,12 +103,12 @@ pub async fn get_app_element(app_handle: u16) -> Option<u32> {
 	MainThread::run(move || AppHandle(app_handle).element_handle().map(|eh| eh.into())).await
 }
 
-pub async fn walk(root: u32, path: String) -> Result<Option<u32>> {
+pub async fn walk(root: u32, path: String) -> Result<u32> {
 	let path: FilterPath = deserialize(&path)?;
 
 	let mut walk_instruction = instruction::Walk { root: root.into(), path };
 
-	MainThread::run(move || walk_instruction.run().map(|el| el.map(|el| el.retain().into())))
+	MainThread::run(move || walk_instruction.run().map(|el| el.retain().into()))
 		.await
 		.map_err(Error::Walk)
 }

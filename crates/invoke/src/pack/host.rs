@@ -201,13 +201,18 @@ impl Host {
 			GetAppElement { app } => Ok(Value::from(get_app_element(app.0).await)),
 
 			WalkElement { root, filter_path } => {
-				let h = MainThread::run(move || instruction::Walk { root, path: filter_path }.run().map(|el| el.map(|el| el.retain())))
+				let element_handle = MainThread::run(move || instruction::Walk { root, path: filter_path }.run().map(|el| el.retain()))
 					.await
-					.map_err(|e| format!("{e:?}"))?;
-				if let Some(h) = h {
-					pack.retain_element(h);
-				}
-				Ok(Value::from(h.map(u32::from)))
+					.map_err(|e| match e {
+						// The walk's failure point (steps matched, failing step) is the
+						// pack author's debugging signal — forward it verbatim.
+						instruction::Error::Walk(e) => e.to_string(),
+						e => format!("{e:?}"),
+					})?;
+
+				pack.retain_element(element_handle);
+
+				Ok(Value::from(u32::from(element_handle)))
 			}
 
 			DisposeElement { element } => {

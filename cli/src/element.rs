@@ -290,7 +290,7 @@ fn walk(app: &str, query_json: &str) -> Result<Element> {
 	if path.is_empty() {
 		return Ok(el);
 	}
-	el.walk(&path).err_code("Walk")?.err_code("NoElement")
+	el.walk(&path).err_code("NoElement")
 }
 
 /// `[{"role": "window", "title": "Foo"}]` → `[[{"role": {"literal":"AXWindow"}}, {"title": {"glob":"Foo"}}]]`
