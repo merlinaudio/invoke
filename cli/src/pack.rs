@@ -3,8 +3,8 @@ use std::io::Write;
 use std::path::Path;
 
 use clap::{Args, Subcommand};
-use serde_json::json;
 use serde_json::Value;
+use serde_json::json;
 
 use crate::error::*;
 use crate::pipe;
@@ -167,7 +167,7 @@ fn init_pack(conn: &mut socket::Connection, o: InitOpts) -> Result {
 		pack: o.pack.clone(),
 		manifest,
 	}
-	.send(conn)?;
+	.request(conn)?;
 	let path = path.as_str().err_code("UnexpectedResponse")?;
 	let index_path = Path::new(path).join("index.ts");
 
@@ -190,7 +190,7 @@ fn ensure_mounted(conn: &mut socket::Connection, publisher: Option<String>, pack
 		publisher,
 		pack: pack.to_owned(),
 	}
-	.send(conn)?;
+	.request(conn)?;
 	if newly_mounted.as_bool().unwrap_or(false) {
 		eprintln!("mounting {pack}...");
 	}
@@ -207,13 +207,13 @@ pub fn run(opts: Opts) -> Result {
 				publisher: p.publisher,
 				pack: p.pack,
 			}
-			.send(&mut conn)?;
+			.request(&mut conn)?;
 			println!("{}", path.as_str().err_code("UnexpectedResponse")?);
 			return Ok(());
 		}
 		Command::List(opts) => match opts.pack {
 			None => {
-				let all = Request::List.send(&mut conn)?;
+				let all = Request::List.request(&mut conn)?;
 				match opts.publisher {
 					None => all,
 					Some(publisher) => all.get(&publisher).cloned().unwrap_or(Value::Null),
@@ -225,7 +225,7 @@ pub fn run(opts: Opts) -> Result {
 					publisher: opts.publisher,
 					pack,
 				}
-				.send(&mut conn)?
+				.request(&mut conn)?
 			}
 		},
 		Command::Run(o) => {
@@ -236,23 +236,23 @@ pub fn run(opts: Opts) -> Result {
 				function: o.function,
 				payload: o.payload,
 			}
-			.send(&mut conn)?
+			.request(&mut conn)?
 		}
 		Command::Mount(p) => Request::Mount {
 			publisher: p.publisher,
 			pack: p.pack,
 		}
-		.send(&mut conn)?,
+		.request(&mut conn)?,
 		Command::Unmount(p) => Request::Unmount {
 			publisher: p.publisher,
 			pack: p.pack,
 		}
-		.send(&mut conn)?,
+		.request(&mut conn)?,
 		Command::Reload(p) => Request::Reload {
 			publisher: p.publisher,
 			pack: p.pack,
 		}
-		.send(&mut conn)?,
+		.request(&mut conn)?,
 	};
 	pipe::write_json_line(&result)
 }

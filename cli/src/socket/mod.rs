@@ -106,7 +106,7 @@ impl Request {
 	/// Send this request over `conn` and return the reply — the request-side
 	/// mirror of [`Connection::request`], so call sites read
 	/// `Request::Mount { .. }.send(&mut conn)` (cf. libinvoke's `req.run(pack)`).
-	pub fn send(self, conn: &mut Connection) -> Result<Value> {
+	pub fn request(self, conn: &mut Connection) -> Result<Value> {
 		conn.request(&self)
 	}
 }

@@ -196,8 +196,7 @@ struct Orchestrator {
 	packs_dir: PathBuf,
 }
 
-/// A handler result: a JSON value, or a human-readable error string (becomes `Reply::Err`).
-type Handled = std::result::Result<Value, String>;
+type HandlerResult = std::result::Result<Value, String>;
 
 /// How long `mount` waits for a freshly-spawned pack to signal `Ready` before
 /// giving up and returning anyway (the pack stays mounted).
@@ -332,7 +331,7 @@ async fn connection(orchestator: Arc<Orchestrator>, stream: UnixStream) {
 }
 
 impl Orchestrator {
-	async fn handle(self: &Arc<Self>, request: Request) -> Handled {
+	async fn handle(self: &Arc<Self>, request: Request) -> HandlerResult {
 		match request {
 			Request::List => Ok(self.list()),
 			Request::Init { pack, manifest } => self.init(&pack, &manifest),
@@ -425,7 +424,7 @@ impl Orchestrator {
 
 	/// Create a local pack directory with `pack.json`; return its path so the
 	/// client can drop an `index.ts` seed in.
-	fn init(&self, pack: &str, manifest: &Value) -> Handled {
+	fn init(&self, pack: &str, manifest: &Value) -> HandlerResult {
 		let dir = self.pack_dir(LOCAL_PUBLISHER_DOMAIN, pack);
 		if dir.join("pack.json").exists() {
 			return Err(format!("pack already exists: {}", dir.display()));
@@ -439,7 +438,7 @@ impl Orchestrator {
 	/// Mount the pack if it isn't already. Idempotent so callers can auto-mount
 	/// before a `run` without racing an explicit mount: returns `true` if this
 	/// call started the pack, `false` if it was already up.
-	async fn mount(self: &Arc<Self>, publisher: String, pack: String) -> Handled {
+	async fn mount(self: &Arc<Self>, publisher: String, pack: String) -> HandlerResult {
 		let id = PackId::new(&publisher, &pack);
 		if self.mounts.lock().unwrap().contains_key(&id) {
 			return Ok(Value::Bool(false));
@@ -479,7 +478,7 @@ impl Orchestrator {
 	}
 
 	/// Drop the launcher guard (kills the child) and stop exposing the pack.
-	fn unmount(&self, id: &PackId) -> Handled {
+	fn unmount(&self, id: &PackId) -> HandlerResult {
 		if self.mounts.lock().unwrap().remove(id).is_none() {
 			return Err(not_mounted(id));
 		}

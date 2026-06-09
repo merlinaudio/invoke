@@ -92,7 +92,7 @@ impl Pack {
 	}
 
 	/// Run a request on the pack and await its typed response.
-	pub async fn run<R, T>(&self, request: R) -> Result<T, Error>
+	pub async fn request<R, T>(&self, request: R) -> Result<T, Error>
 	where
 		R: proto::Request<T>,
 		T: serde::de::DeserializeOwned,
@@ -211,11 +211,11 @@ impl Pack {
 			.get(function_name)
 			.map(|function| function.handle)
 			.ok_or_else(|| format!("FunctionNotFound:{function_name}"))?;
-		proto::RunFunction { function, payload }.run(self).await.map_err(|e| format!("{e:?}"))
+		proto::RunFunction { function, payload }.request(self).await.map_err(|e| format!("{e:?}"))
 	}
 
 	pub async fn render_view(&self, view: proto::View) -> Result<Value, Error> {
-		proto::RenderView { view }.run(self).await
+		proto::RenderView { view }.request(self).await
 	}
 
 	pub async fn run_view_action(&self, view: proto::View, action_id: impl Into<String>, args: Value) -> Result<Value, Error> {
@@ -224,7 +224,7 @@ impl Pack {
 			args,
 			view,
 		}
-		.run(self)
+		.request(self)
 		.await
 	}
 }
@@ -233,12 +233,12 @@ pub trait RunPack<Response>: proto::Request<Response> + Sized
 where
 	Response: serde::de::DeserializeOwned,
 {
-	fn run<'a>(self, pack: &'a Pack) -> impl Future<Output = Result<Response, Error>> + 'a
+	fn request<'a>(self, pack: &'a Pack) -> impl Future<Output = Result<Response, Error>> + 'a
 	where
 		Self: 'a,
 		Response: 'a,
 	{
-		pack.run(self)
+		pack.request(self)
 	}
 }
 
