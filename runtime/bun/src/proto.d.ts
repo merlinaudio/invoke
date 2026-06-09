@@ -63,7 +63,10 @@ export type Filter =
 ({ valueDescription: MatchString }) & { description?: never; elementBusy?: never; enabled?: never; focused?: never; frontmost?: never; has?: never; help?: never; identifier?: never; labelValue?: never; main?: never; minimized?: never; placeholderValue?: never; role?: never; roleDescription?: never; subrole?: never; title?: never; value?: never } | 
 /**  Matches if the element's Value attribute is equal to the given string */
 ({ value: MatchString }) & { description?: never; elementBusy?: never; enabled?: never; focused?: never; frontmost?: never; has?: never; help?: never; identifier?: never; labelValue?: never; main?: never; minimized?: never; placeholderValue?: never; role?: never; roleDescription?: never; subrole?: never; title?: never; valueDescription?: never } | 
-/**  Matches if any of the element's children match the FilterTree. Expensive operation. */
+/**
+ *  Matches if any of the element's direct children match the FilterTree — one level deep, not descendants.
+ *  To match a grandchild, nest: `{"has": {"role": "group", "has": {"identifier": "X"}}}`. Expensive operation.
+ */
 ({ has: Filter[] }) & { description?: never; elementBusy?: never; enabled?: never; focused?: never; frontmost?: never; help?: never; identifier?: never; labelValue?: never; main?: never; minimized?: never; placeholderValue?: never; role?: never; roleDescription?: never; subrole?: never; title?: never; value?: never; valueDescription?: never } | 
 /**  Always matches. Useful for grabbing the first element that's being checked. */
 "any";

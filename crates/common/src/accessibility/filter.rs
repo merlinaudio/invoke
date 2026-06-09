@@ -66,8 +66,9 @@ pub enum Filter {
 	// ----- Other filters -----
 	// TODO Has is an expensive operation because this iterates over all children, and then the next step in the Filter path also does.
 	// In that case - when there is a next filter path step - why not just store the children we already fetched in this step?
-	// Potentially hard to pull of and maybe not worth it - how expensive is it to fetch children? It's just one macOS API call, after all.
-	/// Matches if any of the element's children match the FilterTree. Expensive operation.
+	// Potentially hard to pull off and maybe not worth it - how expensive is it to fetch children? It's just one macOS API call, after all.
+	/// Matches if any of the element's direct children match the FilterTree (max. one level deep).
+	/// To match a grandchild, nest: `{"has": {"role": "group", "has": {"identifier": "X"}}}`. Expensive operation.
 	Has(BTreeSet<Filter>),
 
 	/// Always matches. Useful for grabbing the first element that's being checked.
