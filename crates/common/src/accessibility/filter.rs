@@ -99,20 +99,17 @@ impl Filter {
 			Value(s) => s.matches(<&str>::try_from(element.attribute(Attribute::Value)?)?),
 
 			Has(filters) => {
-				let children = element.children()?;
-				for filter in filters {
-					for child in &children {
-						// A child that lacks the attribute being matched (e.g. an id-less
-						// group when filtering by identifier) makes `matches` return an AX
-						// error. That just means this child doesn't match — keep looking,
-						// don't abort the whole search. Same tolerance `walk` applies to
-						// candidates at the top level.
-						if filter.matches(&mut Element::new(child)).unwrap_or(false) {
-							return Ok(true);
-						}
-					}
-				}
-				false
+				// `has` is a child step. It matches when one direct child satisfies every
+				// filter in the set, the same way a walk step ANDs its filters against a
+				// candidate.
+				//
+				// A child that lacks an attribute just fails that one filter.
+				// It does not abort the search, so a later child can still match.
+				// Same tolerance walk applies to its candidates.
+				element
+					.children()?
+					.iter()
+					.any(|child| filters.iter().all(|filter| filter.matches(&mut Element::new(child)).unwrap_or(false)))
 			}
 
 			Any => true,
