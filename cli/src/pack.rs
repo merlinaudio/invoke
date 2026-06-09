@@ -3,8 +3,8 @@ use std::io::Write;
 use std::path::Path;
 
 use clap::{Args, Subcommand};
-use serde_json::Value;
 use serde_json::json;
+use serde_json::Value;
 
 use crate::error::*;
 use crate::pipe;
@@ -13,15 +13,16 @@ use crate::socket;
 
 const PACK_SEED: &str = r#"import { app, menubar, Role, Subrole, Vars } from "invoke";
 
-// If exactly one app is exported, all exported functions get registered as pack functions automatically.
-// (As opposed to calling Function.init() manually.)
 export const finder = await app("com.apple.finder");
 
-// Grab one window of `com.example.app`.
-// Try to make queries specific and unambiguous.
-// If multiple windows match the query, a random one is returned.
+// Grab one window of Finder.
+//
+// Hint: Try to make queries specific and unambiguous.
+// If multiple windows match the query, a random one may be returned.
 const window = finder.$({ role: Role.WINDOW, subrole: Subrole.STANDARD_WINDOW });
 
+// Grab a button inside `window`.
+//
 // Elements can be queried from another element.
 //
 // Strings support globbing by default:
@@ -50,7 +51,9 @@ finder.on("focusedWindowChanged", async () => {
 	when.windowFocused = Boolean(await window.focused);
 });
 
-// In the UI, the user can bind a shortcut to this function on their keyboard, mouse, MIDI, etc.
+// All exported functions get registered as pack functions automatically.
+//
+// In the UI, users can bind a shortcut to this function on their keyboard, mouse, MIDI, etc.
 // In the CLI, you can call this function by running:
 //
 //     $ invoke pack run {{packName}} doThing
@@ -183,7 +186,11 @@ fn init_pack(conn: &mut socket::Connection, o: InitOpts) -> Result {
 /// at the call sites that require a mount — running a function and listing a
 /// pack's functions — so it can never fire on `unmount`/`init`/etc.
 fn ensure_mounted(conn: &mut socket::Connection, publisher: Option<String>, pack: &str) -> Result {
-	let newly_mounted = Request::Mount { publisher, pack: pack.to_owned() }.send(conn)?;
+	let newly_mounted = Request::Mount {
+		publisher,
+		pack: pack.to_owned(),
+	}
+	.send(conn)?;
 	if newly_mounted.as_bool().unwrap_or(false) {
 		eprintln!("mounting {pack}...");
 	}

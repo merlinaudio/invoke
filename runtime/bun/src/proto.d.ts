@@ -77,7 +77,6 @@ export type HostHandlers = HostHandlers_Serialize | HostHandlers_Deserialize;
 export type HostHandlers_Deserialize = ({ registerApp: {
 	bundleIdentifier: string,
 } }) & { declareVar?: never; defineFunction?: never; disposeElement?: never; getAppElement?: never; getElementAttribute?: never; keyboardKeyDown?: never; keyboardKeyPress?: never; keyboardKeyUp?: never; observeElementNotification?: never; performElementAction?: never; ready?: never; runFunction?: never; scrollWheelX?: never; scrollWheelY?: never; setElementAttribute?: never; setVar?: never; unobserveElementNotification?: never; walkElement?: never } | ({ defineFunction: {
-	app: AppHandle | null,
 	functionName: string,
 	view: View,
 } }) & { declareVar?: never; disposeElement?: never; getAppElement?: never; getElementAttribute?: never; keyboardKeyDown?: never; keyboardKeyPress?: never; keyboardKeyUp?: never; observeElementNotification?: never; performElementAction?: never; ready?: never; registerApp?: never; runFunction?: never; scrollWheelX?: never; scrollWheelY?: never; setElementAttribute?: never; setVar?: never; unobserveElementNotification?: never; walkElement?: never } | ({ declareVar: {
@@ -141,7 +140,6 @@ export type HostHandlers_Deserialize = ({ registerApp: {
 export type HostHandlers_Serialize = ({ registerApp: {
 	bundleIdentifier: string,
 } }) & { declareVar?: never; defineFunction?: never; disposeElement?: never; getAppElement?: never; getElementAttribute?: never; keyboardKeyDown?: never; keyboardKeyPress?: never; keyboardKeyUp?: never; observeElementNotification?: never; performElementAction?: never; ready?: never; runFunction?: never; scrollWheelX?: never; scrollWheelY?: never; setElementAttribute?: never; setVar?: never; unobserveElementNotification?: never; walkElement?: never } | ({ defineFunction: {
-	app: AppHandle | null,
 	functionName: string,
 	view: View,
 } }) & { declareVar?: never; disposeElement?: never; getAppElement?: never; getElementAttribute?: never; keyboardKeyDown?: never; keyboardKeyPress?: never; keyboardKeyUp?: never; observeElementNotification?: never; performElementAction?: never; ready?: never; registerApp?: never; runFunction?: never; scrollWheelX?: never; scrollWheelY?: never; setElementAttribute?: never; setVar?: never; unobserveElementNotification?: never; walkElement?: never } | ({ declareVar: {

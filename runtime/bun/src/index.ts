@@ -3,8 +3,7 @@ import "./register";
 import path from "node:path";
 import { writeFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
-import { App, Function as PackFunction, View } from "./globals";
-import { AppDelegate } from "./modules/invoke";
+import { Function as PackFunction, View } from "./globals";
 import { connect, ready } from "./rpc";
 
 // The launcher passes two positional arguments: the socket path to connect to,
@@ -31,26 +30,18 @@ await assertSeatbeltDeniesParentWrite(root);
 
 const packModule = await import(pathToFileURL(await resolvePackEntrypoint(root)).href);
 
-await getSingleExportedApp(packModule).then(app => app && registerExportedFunctions(app, packModule));
+await registerExportedFunctions(packModule);
 
 // Initial load and function registration are done; let the host know the pack
 // is ready to have its functions run.
 await ready();
 
-async function getSingleExportedApp(packModule: Record<string, any>) {
-	const apps = Object.values(packModule).filter(value => value instanceof AppDelegate || value instanceof App);
-	if (apps.length !== 1) {
-		if (apps.length > 1) console.warn(`[pack] skipped exported function registration: expected exactly one exported app, found ${apps.length}`);
-		return;
-	}
-	return apps[0]!;
-}
-
 /**
- * If one (and only one) App or AppDelegate was exported, all functions exported
- * by the passed-in pack esm will be registered as functions.
+ * Register every exported function. Functions carry no app: the apps a pack
+ * drives are registered when the pack creates them with `app(...)`, and scoping
+ * a function's hotkey to an app is the orchestrator's binding concern.
  */
-async function registerExportedFunctions(app: App | AppDelegate, packModule: Record<string, any>) {
+async function registerExportedFunctions(packModule: Record<string, any>) {
 	await Promise.all(
 		Object.entries(packModule).map(async ([name, value]) => {
 			if (typeof value !== "function") return;
@@ -62,7 +53,7 @@ async function registerExportedFunctions(app: App | AppDelegate, packModule: Rec
 				else console.error(`[pack] invalid View for function "${name}"`, value.View, typeof value.View);
 			}
 
-			await PackFunction.init(app.handle, name, value, value.end, view).catch(error => {
+			await PackFunction.init(name, value, value.end, view).catch(error => {
 				console.error(`[pack] error initializing function "${name}"`, error);
 			});
 		}),

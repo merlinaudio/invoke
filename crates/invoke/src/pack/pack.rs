@@ -14,7 +14,7 @@ use tokio::sync::watch;
 use crate::{
 	monitor::AppHandle,
 	resource::{Element, Notification, Var},
-	when::VarHandle,
+	when::{self, VarHandle},
 };
 
 use super::{
@@ -27,7 +27,6 @@ use super::{
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Function {
 	pub handle: proto::Function,
-	pub app: Option<AppHandle>,
 	pub name: String,
 	pub view: proto::View,
 }
@@ -62,6 +61,12 @@ pub struct Pack {
 	vars: papaya::HashMap<String, Var>,
 	notifications: papaya::HashMap<NotificationRegistrationHandle, Notification>,
 	functions: papaya::HashMap<String, Function>,
+	/// The apps this pack registered.
+	///
+	/// This is solely for whoever embeds libinvoke; libinvoke makes no use of `apps`.
+	/// For example, The UI bundle of invoke (Invoke.app) uses this to ensure that shortcuts
+	/// are only triggered when one of the apps this pack registered is focused.
+	apps: papaya::HashMap<AppHandle, ()>,
 	hooks: PackHooks,
 	// Becomes `true` once the pack sends `Ready` (initial load + function registration done)
 	ready: watch::Sender<bool>,
@@ -80,6 +85,7 @@ impl Pack {
 			vars: papaya::HashMap::new(),
 			notifications: papaya::HashMap::new(),
 			functions: papaya::HashMap::new(),
+			apps: papaya::HashMap::new(),
 			hooks,
 			ready: watch::Sender::new(false),
 		})
@@ -128,14 +134,25 @@ impl Pack {
 		(self.outbound)(message);
 	}
 
-	pub(super) fn define_function(&self, app: Option<AppHandle>, name: String, view: proto::View) -> proto::Function {
+	pub(super) fn define_function(&self, name: String, view: proto::View) -> proto::Function {
 		let handle = proto::Function(self.next_function.fetch_add(1, Ordering::Relaxed));
-		let function = Function { handle, app, name, view };
+		let function = Function { handle, name, view };
 		self.functions.pin().insert(function.name.clone(), function.clone());
 		if let Some(hook) = &self.hooks.function_defined {
 			hook(&function);
 		}
 		handle
+	}
+
+	/// Record that the pack registered an app. The set scopes the pack's hotkeys.
+	pub(super) fn register_app(&self, app: AppHandle) {
+		self.apps.pin().insert(app, ());
+	}
+
+	/// The apps this pack registered. The orchestrator's shortcut scope iterates
+	/// these on every reconcile, so it sees the current set, not a snapshot.
+	pub fn apps(&self) -> impl Iterator<Item = AppHandle> {
+		self.apps.pin().iter().map(|(&app, ())| app).collect::<Vec<_>>().into_iter()
 	}
 
 	pub(super) fn declare_var(&self, name: String, handle: VarHandle) {
@@ -146,7 +163,7 @@ impl Pack {
 	}
 
 	pub(super) fn set_var(&self, handle: VarHandle, value: bool) {
-		crate::when::var::set_var(handle, value);
+		when::var::set_var(handle, value);
 		if let Some(hook) = &self.hooks.var_set {
 			hook(handle, value);
 		}

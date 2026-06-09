@@ -76,7 +76,6 @@ pub enum HostHandlers {
 		bundle_identifier: String,
 	},
 	DefineFunction {
-		app: Option<AppHandle>,
 		function_name: String,
 		view: View,
 	},

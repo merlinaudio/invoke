@@ -39,7 +39,6 @@ mod tests {
 	use super::*;
 	use std::sync::{Arc, Mutex};
 
-	use crate::monitor::AppHandle;
 	use crate::when::VarHandle;
 	use crate::when::var::get_var;
 	use proto::{HostHandlers, Incoming, Outgoing};
@@ -159,7 +158,6 @@ mod tests {
 			&pack,
 			&mut outgoing_receiver,
 			HostHandlers::DefineFunction {
-				app: Some(AppHandle(9)),
 				function_name: "zoom".into(),
 				view: proto::View(11),
 			},
@@ -169,7 +167,6 @@ mod tests {
 
 		let function = pack.function("zoom").unwrap();
 		assert_eq!(function.handle, proto::Function(handle));
-		assert_eq!(function.app, Some(AppHandle(9)));
 		assert_eq!(function.name, "zoom");
 		assert_eq!(function.view, proto::View(11));
 	}
@@ -189,7 +186,6 @@ mod tests {
 			&target,
 			&mut target_outgoing_receiver,
 			HostHandlers::DefineFunction {
-				app: None,
 				function_name: "zoomIn".into(),
 				view: proto::View(1),
 			},
@@ -266,7 +262,6 @@ mod tests {
 			&pack,
 			&mut outgoing_receiver,
 			HostHandlers::DefineFunction {
-				app: Some(AppHandle(2)),
 				function_name: "save".into(),
 				view: proto::View(8),
 			},
@@ -284,7 +279,6 @@ mod tests {
 			&*functions.lock().unwrap(),
 			&[Function {
 				handle: proto::Function(function_handle),
-				app: Some(AppHandle(2)),
 				name: "save".into(),
 				view: proto::View(8),
 			}]

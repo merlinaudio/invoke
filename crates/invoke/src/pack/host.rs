@@ -114,19 +114,17 @@ impl Host {
 		match req {
 			RegisterApp { bundle_identifier } => {
 				if let Some(h) = monitor::app_handle_by_bundle_id(&bundle_identifier) {
+					pack.register_app(h);
 					return Ok(Value::from(h.0));
 				}
 				let h = register_app(bundle_identifier);
 				_ = register_accessibility_observer(h).await;
+				pack.register_app(monitor::AppHandle(h));
 				Ok(Value::from(h))
 			}
 
-			DefineFunction {
-				app,
-				function_name: name,
-				view,
-			} => {
-				let handle = pack.define_function(app, name, view);
+			DefineFunction { function_name: name, view } => {
+				let handle = pack.define_function(name, view);
 				Ok(Value::from(handle.0))
 			}
 

@@ -113,53 +113,26 @@ export class Function {
 	static async init(name: string, run: (payload: unknown) => unknown | Promise<unknown>, end: () => void | Promise<void>): Promise<Function>;
 	static async init(name: string, run: (payload: unknown) => unknown | Promise<unknown>, view: View): Promise<Function>;
 	static async init(name: string, run: (payload: unknown) => unknown | Promise<unknown>, end: () => void | Promise<void>, view: View): Promise<Function>;
-	static async init(app: { handle: AppHandle } | AppHandle, name: string, run: (payload: unknown) => unknown | Promise<unknown>): Promise<Function>;
 	static async init(
-		app: { handle: AppHandle } | AppHandle,
-		name: string,
-		run: (payload: unknown) => unknown | Promise<unknown>,
-		end: () => void | Promise<void>,
-	): Promise<Function>;
-	static async init(
-		app: { handle: AppHandle } | AppHandle,
-		name: string,
-		run: (payload: unknown) => unknown | Promise<unknown>,
-		view: View,
-	): Promise<Function>;
-	static async init(
-		app: { handle: AppHandle } | AppHandle,
-		name: string,
-		run: (payload: unknown) => unknown | Promise<unknown>,
-		end: () => void | Promise<void>,
-		view: View,
-	): Promise<Function>;
-	static async init(
-		app: { handle: AppHandle } | AppHandle,
 		name: string,
 		run: (payload: unknown) => unknown | Promise<unknown>,
 		end: (() => void | Promise<void>) | undefined,
 		view: View | undefined,
 	): Promise<Function>;
 	static async init(...args: any[]) {
-		let app: { handle: AppHandle } | AppHandle | null = null,
-			name: string,
-			run: (payload: unknown) => unknown | Promise<unknown>,
-			end: (() => void | Promise<void>) | undefined,
-			view: View | undefined;
+		let name: string, run: (payload: unknown) => unknown | Promise<unknown>, end: (() => void | Promise<void>) | undefined, view: View | undefined;
 
 		// Pop View from end if present
 		if (args[args.length - 1] instanceof View) view = args.pop();
 
-		if (typeof args[0] === "string") [name, run, end] = args;
-		else [app, name, run, end] = args;
+		[name, run, end] = args;
 
-		if (typeof app === "object" && app !== null && "handle" in app) app = app.handle;
-		if (app !== null && typeof app !== "number") throw new Error(`First argument must be function name or an App instance. Got: ${app} (${typeof app})`);
+		if (typeof name !== "string") throw new Error(`First argument must be the function name. Got: ${name} (${typeof name})`);
 
 		// Default view: just a <Function>
 		view ??= new View(() => createElement(flight.modules["invoke/ui"]!.Function, { name }));
 
-		const functionHandle = await rpc.defineFunction(app, name, view.id);
+		const functionHandle = await rpc.defineFunction(name, view.id);
 
 		if (functionHandle == null) throw new Error(`Failed to declare function "${name}"`);
 
@@ -943,10 +916,6 @@ export class App {
 	get handle() {
 		return this.#handle;
 	}
-
-	function = (name: string, run: (payload: unknown) => unknown | Promise<unknown>, ...rest: any[]) => {
-		return (Function.init as any)(this, name, run, ...rest) as Promise<Function>;
-	};
 
 	key = Object.assign(
 		(...args: ConstructorParameters<typeof Key>) => {

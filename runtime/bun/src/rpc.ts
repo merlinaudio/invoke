@@ -190,8 +190,8 @@ export const registerApp = (bundleIdentifier: string) => call("registerApp", { b
 // Tell the host the pack finished its initial load and function registration.
 export const ready = () => call("ready", {}) as Promise<void>;
 
-export const defineFunction = (app: AppHandle | null, functionName: string, view: number) =>
-	call("defineFunction", { app, functionName, view }) as Promise<FunctionHandle | null>;
+export const defineFunction = (functionName: string, view: number) =>
+	call("defineFunction", { functionName, view }) as Promise<FunctionHandle | null>;
 
 export const declareVar = (name: string) => call("declareVar", { name }) as Promise<VarHandle | null>;
 export const setVar = (varHandle: VarHandle, value: boolean) => call("setVar", { var: varHandle, value }) as Promise<void>;
