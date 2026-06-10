@@ -58,8 +58,7 @@ repeatable / save this as a pack" as the natural follow-up to any exploration.
 Every `element` and `app get` command takes a bundle ID and a **query path**: a JSON
 array that walks down the AX tree. Each array element is one _step_ — an object whose
 keys are attributes and whose values are patterns the element must match. Multiple keys
-in one step are **AND**ed against a single element; multiple steps **descend** into
-matching descendants.
+in one step are **AND**ed against a single element.
 
 ```sh
 # menuBar → the item titled "Edit" inside it
@@ -68,15 +67,15 @@ invoke element get com.apple.finder '[{"role": "menuBar"}, {"title": "Edit"}]'
 
 Matching rules — these are easy to get wrong:
 
+- **Each step matches a _direct child_, just like CSS `>`.** `[{toolbar}, {textField}]` matches a textField only if it's an _immediate_ child of the toolbar; if it's `toolbar → group → textField` the query fails ("walked 1/2 steps, no child matched") — it never looks inside `group`. You must spell **every** level: `[{toolbar}, {group}, {textField}]`. (To match a step by a stable child instead of pinning its exact position, use `has:` — see below.)
+- **No backtracking across ambiguous steps.** When a step matches the first of several candidate siblings and a _later_ step then fails under it, the engine gives up — it does **not** rewind to try the other siblings. So `[{table}, {row}, {cell}]` binds `row` to the first row and fails if that row lacks the cell, even when another row would match. Push the disambiguator up to the ambiguous step (e.g. `{role:"row", has:{…}}`) so the right sibling is chosen in the first place.
 - **String values are globs**: `*` = any sequence, `?` = any single char.
   `{"identifier": "TrackView.Device*"}` matches a prefix.
 - **`role` and `subrole` are literals, not globs**, and use **camelCase** names
   (`window`, `menuBar`, `popUpButton`, `standardWindow`) — they're normalized to AX
   constants internally. See `references/vocabulary.md` for the full list.
 - An **empty path `[]`** (the default for `walk`) means the app's root element.
-- Queries are matched against the tree as it is _right now_; if multiple elements match
-  a step, one is chosen — make queries specific (add `title`/`identifier`/`subrole`)
-  when it matters.
+- Queries are matched against the tree as it is _right now_; if multiple elements match a step, the **first in tree order** is used — make queries specific (add `title`/`identifier`/`subrole`) when it matters.
 
 ## Explore first, then act
 
@@ -169,6 +168,43 @@ Navigate it in layers instead of dumping it:
   every node.
 - Keep depth shallow and queries targeted; widen only where you need to. Treat it like
   scraping a DOM: find the container, then read its meaningful children.
+
+## Big lists and tables
+
+Reading a `table` or `outline` row by row is slow: every attribute read is a separate round-trip to the app, and they add up — a list with many rows takes long enough to look frozen. How a list exposes its rows is app-specific, and both modes exist: some apps put a handle for **every** row in the tree (so `children`/`rows` can return hundreds), others put only the rows currently on screen. Either way, don't bulk-read a big list. Two rules:
+
+- **Don't read `children`/`rows` of a big table and loop over all of them.** If the element offers **`visibleRows`** (tables/outlines usually do; web and Electron lists often don't — the getter throws if absent), read that — only the rows on screen. To read more rows, **scroll** the list, then read again.
+- Do fewer reads per row. The per-row fields usually sit inside a content container under the row; `walk` one row first to learn that app's structure (it differs per app), then read that container's `children` once and read each child's `identifier` and `value` — instead of walking from the row to each field separately.
+
+## Waiting for the UI to change: prefer notifications over re-reading
+
+When the thing you want appears a moment _after_ an action — content loading, a page navigating, a value settling — it's usually better to wait for an AX notification than to loop re-reading or sleeping until it shows up. Such a loop tends to be slow and to read the UI while it's still half-drawn. Most apps post a notification when the change finishes, so the common pattern is: subscribe, trigger the change, wait for the notification, then read. If exploration shows the app posts nothing useful for a given change, a bounded re-read loop is a reasonable fallback.
+
+In a pack, `element` and `app` have a method **`.on(name, cb)`** that calls `cb` every time the notification `name` fires. It returns a function you call to stop listening. As one illustration, you could wrap it to await a single notification — treat this as a sketch to adapt, not a drop-in:
+
+```ts
+// resolve when `name` fires on `el`, or after `ms`
+function waitFor(el, name, ms) {
+	return new Promise((resolve) => {
+		let done = false;
+		const finish = (hit) => { if (done) return; done = true; clearTimeout(t); off().catch(() => {}); resolve(hit); };
+		const off = el.on(name, () => finish(true)); // .on() returns the unsubscribe fn
+		const t = setTimeout(() => finish(false), ms);
+	});
+}
+
+// Which notification fires (and on which element) is app-specific — explore to find it.
+// The element that POSTS it isn't always the one you read, so subscribing on the app is the safe default.
+// Subscribe BEFORE you trigger the change, or a fast update can fire before you're listening.
+const loaded = waitFor(app, "loadComplete", 5000); // `app` = your AppDelegate
+await row.setAttribute("selected", true);
+await loaded;
+const text = await content.value; // loaded now — read what you need
+```
+
+Useful names (full set in `invoke.d.ts` / `Notification`): **`loadComplete`** (web/HTML content finished loading — web views typically fire it), `selectedRowsChanged`, `layoutChanged`, `valueChanged`, `created`, `UIElementDestroyed`, `titleChanged`, `focusedUIElementChanged`. Stale notifications from a _previous_ state can arrive, so if correctness matters, **re-read on each event and accept only when the tree shows what you expect**, rather than trusting the first event.
+
+Caveat: listening needs the persistent pack runtime — a one-shot CLI `invoke element` command can't hold a subscription. So during live CLI exploration you _do_ re-run commands by hand; inside a pack, prefer a notification over a baked-in poll loop when one is available.
 
 ## Invoke is one tool among many
 
@@ -278,7 +314,7 @@ Three authoritative references — lean on these instead of guessing the API:
   API (`app()`, `.$({...})` with `Role`/`Subrole`, `.press()`, `.key.press()`, the
   `menubar()` helper, `Vars`). Read it first.
 - **`references/pack-api.md`** (this skill) — the distilled, verified API: querying with
-  `.$(...)`, the `has:` descendant filter, element actions, reading/writing attributes,
+  `.$(...)`, the `has:` filter (match a parent by a child, like CSS `:has()`), element actions, reading/writing attributes,
   events, and `Vars`.
 - **`node_modules/invoke/invoke.d.ts`** at the packs root (what `import … from "invoke"`
   resolves to) — the full, version-exact type defs for anything beyond the above. Also
@@ -303,6 +339,18 @@ Design packs as the app's _operations_, not caller mechanics: `waveformZoom(amou
 not `up`/`down`/`delta`. The function names the user-level concept; the ugly AX/HID work
 hides inside. **`Vars`** are named booleans a pack exposes (e.g. `windowFocused`) that a
 caller can gate on — useful for context-sensitive shortcuts.
+
+### Pack gotchas (pack calls throw where the CLI stayed quiet)
+
+The CLI silently omits missing data; the pack API **throws**. Robust packs wrap reads.
+
+- **`walk()` rejects on no match** — despite its `Promise<Element | null>` type. Wrap optional lookups: `const x = await el.walk(step).catch(() => null)`.
+- **Attribute getters throw `AttributeUnsupported` (-25205)** when the element lacks that attribute (e.g. `.value` on a group). Guard every read you're not certain of: `const v = await el.value.catch(() => null)`. (From the CLI this is invisible — `walk` just omits the attribute.)
+- **Table/outline rows often don't offer `pick`/`press`.** (Mail's message rows, for example, offer only Unread/Remind Me/Delete, and `pick()` throws `ActionUnsupported` (-25206).) To select such a row, you can **set its `selected` attribute** (`row.setAttribute("selected", true)`); a single-select list replaces the selection. Running `element actions` first shows what an element actually offers, rather than assuming. (`setAttribute` lives on a resolved `Element` — a row from `visibleRows`, or `await someDelegate.element` — not on the lazy `.$()` delegate.)
+- **`pack run` double-encodes the return value**: a returned object arrives as a JSON string inside the NDJSON line — parse twice (`JSON.parse(JSON.parse(line))`).
+- **Packs are pure AX, sandboxed** — no `osascript`/subprocess escape hatch even when an app has a great scripting dictionary. Keep pack logic inside the `invoke` runtime.
+- **Debugging:** `console.error` from a pack doesn't reliably surface. To inspect state, **`throw new Error(JSON.stringify(...))`** and read it off the failed run.
+- **Module state persists** across `pack run` calls (the daemon keeps the instance), and edits need `pack reload` — so leaked subscriptions/caches survive between calls.
 
 ### When a pack misbehaves
 
