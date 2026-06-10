@@ -14,7 +14,7 @@ use std::{
 	fs, io,
 	os::unix::fs::FileTypeExt,
 	path::{Path, PathBuf},
-	process::{Child, ChildStdout, Command, Stdio},
+	process::{Child, Command, Stdio},
 	sync::{
 		Arc,
 		atomic::{AtomicU64, Ordering},
@@ -42,16 +42,6 @@ pub struct Process {
 	socket: PathBuf,
 }
 
-impl Process {
-	/// The pack's stdout — the author's clean output channel (keep it pure so
-	/// `… | jq` works). The launcher always pipes it and hands it over untouched;
-	/// what to do with the bytes (write a file, stream to a webview, drop them) is
-	/// the orchestrator's call. Whoever holds the `Process` must read this or the
-	/// pipe backs up. `None` once taken.
-	pub fn stdout(&mut self) -> Option<ChildStdout> {
-		self.child.stdout.take()
-	}
-}
 
 impl Drop for Process {
 	fn drop(&mut self) {
@@ -78,12 +68,16 @@ fn ensure_socket_removed(socket: &Path) -> io::Result<()> {
 	Ok(())
 }
 
-pub async fn spawn(host: Arc<Host>, id: PackId, hooks: PackHooks, runtime: &Path, root: &Path) -> io::Result<Process> {
+/// `stdout` is where the pack's output channel goes — the orchestrator's call
+/// (the CLI daemon hands in a log file, Invoke.app discards it for now). Never
+/// pass `Stdio::inherit()`: pack output would leak into the orchestrator's own
+/// (e.g. launchd) logs. stderr always inherits: the separate diagnostics channel.
+pub async fn spawn(host: Arc<Host>, id: PackId, hooks: PackHooks, runtime: &Path, root: &Path, stdout: Stdio) -> io::Result<Process> {
 	let socket = socket_path()?;
 	_ = ensure_socket_removed(&socket).inspect_err(|e| log::error!("failed to remove socket in spawn: {e}"));
 
 	let listener = UnixListener::bind(&socket)?;
-	let mut command = command(runtime, root, &socket)?;
+	let mut command = command(runtime, root, &socket, stdout)?;
 	let process = Process {
 		child: command.spawn()?,
 		socket,
@@ -113,7 +107,7 @@ fn socket_path() -> io::Result<PathBuf> {
 	Ok(socket)
 }
 
-fn command(runtime: &Path, root: &Path, socket: &Path) -> io::Result<Command> {
+fn command(runtime: &Path, root: &Path, socket: &Path, stdout: Stdio) -> io::Result<Command> {
 	let runtime = runtime.canonicalize()?;
 	let root = root.canonicalize()?;
 	let runtime_dir = runtime.parent().ok_or_else(|| io::Error::other("runtime has no parent"))?;
@@ -157,10 +151,7 @@ fn command(runtime: &Path, root: &Path, socket: &Path) -> io::Result<Command> {
 		.arg(root)
 		.current_dir("/")
 		.stdin(Stdio::null())
-		// Always pipe stdout so the orchestrator can read it via `Process::stdout`;
-		// never inherit, so pack output can't leak into the orchestrator's own (e.g.
-		// launchd) logs. stderr inherits: the separate diagnostics channel.
-		.stdout(Stdio::piped())
+		.stdout(stdout)
 		.stderr(Stdio::inherit());
 
 	Ok(command)

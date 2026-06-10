@@ -1,5 +1,7 @@
+use std::fs::File;
 use std::fs::OpenOptions;
 use std::io::Write;
+use std::io::stdout;
 use std::path::Path;
 
 use clap::{Args, Subcommand};
@@ -134,6 +136,54 @@ pub struct RunOpts {
 	function: String,
 	/// raw JSON payload forwarded to the function
 	payload: Option<String>,
+}
+
+/// print a pack's stdout log (mounts the pack if needed)
+#[derive(Args)]
+pub struct LogsOpts {
+	/// publisher domain (disambiguates when multiple packs share a name)
+	#[arg(short = 'p', long)]
+	publisher: Option<String>,
+	/// pack name (e.g. abletonlive)
+	pack: String,
+	/// keep following new output, like `tail -f`
+	#[arg(short, long)]
+	follow: bool,
+}
+
+/// `invoke logs <pack>`: mount the pack if needed (so its watchers start
+/// emitting), open its log file at the deterministic path the daemon writes to,
+/// and dump it; `-f` blocks on kqueue until the file grows. Raw bytes, not
+/// JSON — the pack's stdout is the pipe-clean channel.
+pub fn logs(o: LogsOpts) -> Result {
+	let mut conn = socket::Connection::open_or_heal()?;
+	ensure_mounted(&mut conn, o.publisher, &o.pack)?;
+	let mut log = File::open(crate::service::log_path(&o.pack)).err_code("LogOpen")?;
+	// `EVFILT_READ` on a regular file fires when it has bytes past the fd's read
+	// offset — the kernel-blocking primitive behind `tail -f`.
+	let watcher = o
+		.follow
+		.then(|| {
+			let mut watcher = kqueue::Watcher::new()?;
+			watcher.add_file(&log, kqueue::EventFilter::EVFILT_READ, kqueue::FilterFlag::empty())?;
+			watcher.watch()?;
+			Ok::<_, std::io::Error>(watcher)
+		})
+		.transpose()
+		.err_code("LogWatch")?;
+
+	let mut out = stdout();
+	loop {
+		match std::io::copy(&mut log, &mut out) {
+			// Consumer hung up (`invoke logs x | head`) — that's a normal end, not an error.
+			Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => return Ok(()),
+			r => _ = r.err_code("LogRead")?,
+		}
+		match &watcher {
+			None => return Ok(()),
+			Some(watcher) => _ = watcher.iter().next(),
+		}
+	}
 }
 
 /// reference to a pack by name, optionally disambiguated by publisher

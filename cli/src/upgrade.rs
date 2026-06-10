@@ -1,9 +1,12 @@
+use std::fs::canonicalize;
+use std::io::{BufRead, BufReader};
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::time::Duration;
 
 use backon::{BlockingRetryable, ExponentialBuilder};
 use clap::Args;
+use serde::Deserialize;
 
 use crate::error::*;
 
@@ -14,11 +17,21 @@ use crate::error::*;
 #[derive(Args)]
 pub struct Opts {}
 
-// Same convention as `dnf check-update`: 0 = up to date, 100 = update available.
-const UPDATE_AVAILABLE: i32 = 100;
+/// Events the bundle's entrypoint streams as NDJSON on stdout. electrobun runs
+/// that entrypoint in a Worker and the process exits 0 regardless, so exit
+/// codes can't carry results; lines that don't parse are launcher noise.
+#[derive(Deserialize)]
+#[serde(tag = "update", rename_all = "camelCase")]
+enum Update {
+	Current { version: String },
+	Available { version: String },
+	Progress { message: String },
+	Installing { version: String },
+	Error { message: String },
+}
 
 pub fn run(_: Opts) -> Result {
-	let exe = std::env::current_exe().and_then(std::fs::canonicalize).err_code("resolve_cli_path")?;
+	let exe = std::env::current_exe().and_then(canonicalize).err_code("resolve_cli_path")?;
 
 	let Some(bundle) = exe
 		.ancestors()
@@ -34,34 +47,58 @@ pub fn run(_: Opts) -> Result {
 		));
 	};
 
+	println!("Checking for update...");
+
 	// Check first so a no-op upgrade never disturbs a running app.
-	match updater(bundle, "check")? {
-		0 => return Ok(()),
-		UPDATE_AVAILABLE => {
+	match run_updater_command(bundle, "check")? {
+		Update::Current { version } => {
+			println!("Already up to date: {version}");
+			Ok(())
+		}
+		Update::Available { version } => {
+			println!("Update available: {version}");
 			quit_app(bundle)?;
-			match updater(bundle, "immediate")? {
-				0 => Ok(()),
-				_ => Err(Error::code("UpdaterFailedToApply")),
+			match run_updater_command(bundle, "immediate")? {
+				Update::Installing { version } => {
+					println!("Updated to {version}");
+					Ok(())
+				}
+				Update::Error { message } => Err(Error::new("UpdaterApply", message)),
+				_ => Err(Error::code("UpdaterApply")),
 			}
 		}
-		_ => return Err(Error::code("UpdaterFailedToCheck")),
+		Update::Error { message } => Err(Error::new("UpdaterCheck", message)),
+		_ => Err(Error::code("UpdaterCheck")),
 	}
 }
 
-/// The bundle's own entrypoint handles INVOKE_UPDATE without loading anything
-/// else: "check" exits 10 if an update is available, "immediate" applies it
-/// (relaunching the app afterward).
-fn updater(bundle: &Path, mode: &str) -> Result<i32> {
-	let status = Command::new(bundle.join("Contents/MacOS/launcher"))
+/// Run the bundle's updater ("check" or "immediate") via its launcher, print
+/// progress, and return the last result event once it exits.
+fn run_updater_command(bundle: &Path, mode: &str) -> Result<Update> {
+	let mut child = Command::new(bundle.join("Contents/MacOS/launcher"))
 		.env("INVOKE_UPDATE", mode)
-		.status()
-		.err_code("UpdaterFailedToLaunch")?;
+		.stdout(Stdio::piped())
+		.spawn()
+		.err_code("UpdaterLaunch")?;
 
-	status.code().err_code("UpdaterFailedToLaunch")
+	let reader = BufReader::new(child.stdout.take().err_code("UpdaterLaunch")?);
+
+	// Last-emitted event from the updater is the result.
+	let mut result = None;
+
+	for line in reader.lines() {
+		match serde_json::from_str(&line.err_code("UpdaterLaunch")?) {
+			Ok(Update::Progress { message }) => println!("{message}"),
+			Ok(update) => result = Some(update),
+			Err(_) => {}
+		}
+	}
+
+	child.wait().err_code("UpdaterLaunch")?;
+	result.err_code("UpdaterNoResult") // The updater always emits something to stdout. If none, something is wrong.
 }
 
-/// Gracefully quit the app if it's running, waiting for it to exit so the
-/// bundle swap doesn't race a live process.
+/// Gracefully quit the app if it's running, waiting for it to exit so the bundle swap doesn't race a live process.
 fn quit_app(bundle: &Path) -> Result {
 	let app = bundle.file_stem().and_then(|s| s.to_str()).err_code("NotVendoredThroughAppBundle")?;
 

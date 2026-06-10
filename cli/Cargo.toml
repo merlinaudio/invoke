@@ -13,6 +13,7 @@ backon = { version = "1", default-features = false, features = [
     "std-blocking-sleep",
 ] }
 clap = { version = "4", features = ["derive"] }
+kqueue = "1"
 objc2 = "0.6.4"
 objc2-foundation = { version = "0.3.2", features = [
     "NSDate",

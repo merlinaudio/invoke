@@ -34,6 +34,8 @@ enum Command {
 	Key(key::Opts),
 	Scroll(scroll::Opts),
 	Pack(pack::Opts),
+	/// print a pack's stdout log (`-f` to follow)
+	Logs(pack::LogsOpts),
 	Sandbox(sandbox::Opts),
 	Service(service::Opts),
 	Upgrade(upgrade::Opts),
@@ -52,6 +54,7 @@ fn main() {
 		Command::Key(opts) => key::run(opts),
 		Command::Scroll(opts) => scroll::run(opts),
 		Command::Pack(opts) => pack::run(opts),
+		Command::Logs(opts) => pack::logs(opts),
 		Command::Sandbox(opts) => sandbox::run(opts),
 		Command::Service(opts) => service::run(opts),
 		Command::Upgrade(opts) => upgrade::run(opts),

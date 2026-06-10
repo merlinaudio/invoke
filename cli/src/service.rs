@@ -16,7 +16,7 @@
 //! socket server, pack I/O, `Host::receive`) runs on a side runtime.
 
 use std::collections::HashMap;
-use std::env;
+use std::env::{self, temp_dir};
 use std::fs::canonicalize;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -25,9 +25,7 @@ use std::sync::{Arc, Mutex};
 use clap::{Args, Subcommand};
 use objc2_core_foundation::CFRunLoop;
 use serde_json::{Map, Value};
-use service_manager::{
-	LaunchdServiceManager, RestartPolicy, ServiceInstallCtx, ServiceLabel, ServiceManager, ServiceStartCtx, ServiceStatus, ServiceStatusCtx,
-};
+use service_manager::{LaunchdServiceManager, RestartPolicy, ServiceInstallCtx, ServiceLabel, ServiceManager, ServiceStartCtx};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
 
@@ -53,6 +51,10 @@ enum Cmd {
 	Install,
 	/// start the installed launch agent (also enables start-at-login)
 	Start,
+	/// stop the launch agent (until next login or `invoke service start`)
+	Stop,
+	/// restart the launch agent (kills a wedged instance, execs the current binary)
+	Restart,
 	/// show the plist path and whether launchd has the agent loaded
 	Status,
 }
@@ -75,6 +77,8 @@ pub fn run(opts: Opts) -> Result {
 		Cmd::Run(opts) => run_orchestrator(opts),
 		Cmd::Install => install(),
 		Cmd::Start => start(),
+		Cmd::Stop => stop(),
+		Cmd::Restart => kickstart(),
 		Cmd::Status => status(),
 	}
 }
@@ -146,6 +150,22 @@ fn start() -> Result {
 	LaunchdServiceManager::user().start(ServiceStartCtx { label: label() }).err_code("Start")
 }
 
+/// Stop the agent by unloading the job — the only way to halt a `KeepAlive` job
+/// (`launchctl stop` would just make launchd respawn it). `RunAtLoad` brings it
+/// back at next login; `start`/`restart` bring it back sooner.
+fn stop() -> Result {
+	let plist = launchagent_plist_path()?;
+	if !plist.exists() {
+		return Err(Error::new("NotInstalled", "agent not installed — run `invoke service install`"));
+	}
+	let out = Command::new("launchctl").arg("unload").arg(&plist).output().err_code("Stop")?;
+	if out.status.success() {
+		Ok(())
+	} else {
+		Err(Error::new("Stop", String::from_utf8_lossy(&out.stderr).trim().to_owned()))
+	}
+}
+
 /// Force-restart the launch agent so launchd execs the current on-disk binary and
 /// rebinds the socket. `kickstart -k` kills the running instance first, so it
 /// recovers a *wedged* daemon (process alive but listener dead — e.g. an update
@@ -169,13 +189,26 @@ pub fn kickstart() -> Result {
 	}
 }
 
+/// Probe launchd by exact label. service-manager's `status` is no good here: when
+/// `launchctl print <label>` misses, it retries with any *suggested* label containing
+/// ours — and Invoke.app's `application.com.getinvoke.invoke.<asn>` job matches, so it
+/// reports the app as our agent. `launchctl list <label>` matches exactly, and its
+/// output carries a `"PID"` entry only while the job has a live process.
 fn status() -> Result {
-	let state = match LaunchdServiceManager::user().status(ServiceStatusCtx { label: label() }).err_code("Status")? {
-		ServiceStatus::Running => "running",
-		ServiceStatus::Stopped(_) => "installed, not running",
-		ServiceStatus::NotInstalled => "not installed",
+	let plist = launchagent_plist_path()?;
+	let state = if !plist.exists() {
+		"not installed"
+	} else {
+		let out = Command::new("launchctl").arg("list").arg(LABEL).output().err_code("Status")?;
+		if !out.status.success() {
+			"installed, not loaded"
+		} else if String::from_utf8_lossy(&out.stdout).contains("\"PID\"") {
+			"running"
+		} else {
+			"loaded, not running"
+		}
 	};
-	println!("plist:  {}\nstatus: {state}", launchagent_plist_path()?.display());
+	println!("plist:  {}\nstatus: {state}", plist.display());
 	Ok(())
 }
 
@@ -187,6 +220,16 @@ fn status() -> Result {
 struct Mount {
 	_process: Process,
 	functions: Arc<Mutex<Vec<String>>>,
+}
+
+/// Where a mounted pack's stdout lands: a deterministic per-pack-name file in
+/// the user's temp dir, rotated to `<pack>.until-<unix secs>.log` on every
+/// mount and gone on reboot — live diagnostics, not an archive. The fd is handed to the child at spawn
+/// (launchd-style), so nothing drains a pipe; `invoke logs` opens this path
+/// directly without asking the daemon. Keyed by pack name alone so the CLI can
+/// compute it pre-resolution; same-named packs from two publishers share it.
+pub fn log_path(pack: &str) -> PathBuf {
+	temp_dir().join(format!("invoke-pack-{pack}.log"))
 }
 
 struct Orchestrator {
@@ -366,7 +409,13 @@ impl Orchestrator {
 				// (it re-parses with a reviver that rebuilds Element handles). The CLI's
 				// `--payload` is already serialized JSON text, so pass it straight through;
 				// absent → the string "null".
-				pack.run_function(&function, Value::String(payload.unwrap_or_else(|| "null".to_owned()))).await
+				let result = pack.run_function(&function, Value::String(payload.unwrap_or_else(|| "null".to_owned()))).await?;
+				// The result comes back the same way — a separately-encoded JSON string.
+				// Decode it here so clients get plain JSON, not a string of JSON.
+				Ok(match result {
+					Value::String(encoded) => serde_json::from_str(&encoded).unwrap_or(Value::String(encoded)),
+					other => other,
+				})
 			}
 		}
 	}
@@ -457,7 +506,15 @@ impl Orchestrator {
 			..Default::default()
 		};
 
-		let process = pack_launch_macos::spawn(self.host.clone(), id.clone(), hooks, &self.runtime, &root)
+		// Set aside the previous mount's log as "<pack>.until-<unix secs>.log"
+		// instead of truncating it — remounts (soon automatic, on pack file
+		// change) shouldn't eat the log you were just reading. The temp dir is
+		// the rotation policy: everything vanishes on reboot.
+		let path = log_path(&pack);
+		let ended = std::time::UNIX_EPOCH.elapsed().map(|d| d.as_secs()).unwrap_or(0);
+		let _ = std::fs::rename(&path, path.with_extension(format!("until-{ended}.log")));
+		let log = std::fs::File::create(&path).map_err(|e| e.to_string())?;
+		let process = pack_launch_macos::spawn(self.host.clone(), id.clone(), hooks, &self.runtime, &root, log.into())
 			.await
 			.map_err(|e| e.to_string())?;
 
