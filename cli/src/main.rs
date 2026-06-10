@@ -15,6 +15,7 @@ mod sandbox;
 mod scroll;
 mod service;
 mod socket;
+mod upgrade;
 
 mod util;
 
@@ -35,6 +36,7 @@ enum Command {
 	Pack(pack::Opts),
 	Sandbox(sandbox::Opts),
 	Service(service::Opts),
+	Upgrade(upgrade::Opts),
 
 	/// `invoke <pack> [function]` — dispatches to `pack list` / `pack run`.
 	#[command(external_subcommand)]
@@ -52,6 +54,7 @@ fn main() {
 		Command::Pack(opts) => pack::run(opts),
 		Command::Sandbox(opts) => sandbox::run(opts),
 		Command::Service(opts) => service::run(opts),
+		Command::Upgrade(opts) => upgrade::run(opts),
 		Command::Catchall(args) => pack::run_catchall(args),
 	};
 
