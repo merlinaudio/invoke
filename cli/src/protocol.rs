@@ -12,7 +12,7 @@ use serde_json::Value;
 /// `publisher` is optional: when `None`, the daemon resolves it by finding the
 /// sole installed pack with that name (it owns the packs directory).
 #[derive(Serialize, Deserialize)]
-#[serde(tag = "cmd", rename_all = "kebab-case")]
+#[serde(tag = "cmd", rename_all = "camelCase")]
 pub enum Request {
 	/// Every installed pack, as `{ publisher: { pack: manifest } }`.
 	List,
