@@ -35,7 +35,7 @@ hid = { path = "../crates/hid", default-features = false, features = ["serde"] }
 invoke = { path = "../crates/invoke" }
 pack-launch-macos = { path = "../crates/pack-launch-macos" }
 tokio = { version = "1", features = [
-    "rt-multi-thread",
+    "rt",
     "net",
     "io-util",
     "sync",

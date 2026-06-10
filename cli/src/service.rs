@@ -220,12 +220,11 @@ fn run_orchestrator(opts: RunOpts) -> Result {
 		packs_dir,
 	});
 
-	let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().err_code("Tokio")?;
-	rt.spawn(serve(orchestrator, socket));
+	let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().err_code("Tokio")?;
+	std::thread::spawn(move || rt.block_on(serve(orchestrator, socket)));
 
 	// Blocks the main thread forever, draining the main dispatch queue (so
-	// libinvoke's `MainThread::run` resolves) and AX observer callbacks. `rt`
-	// stays owned in this scope, keeping the server alive.
+	// libinvoke's `MainThread::run` resolves) and AX observer callbacks.
 	CFRunLoop::run();
 	Ok(())
 }
