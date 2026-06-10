@@ -150,61 +150,13 @@ The test for a good query: _would this still match the right element after the u
 switches views, opens another window, reorders a toolbar, or changes language?_ If not,
 keep exploring for a more stable anchor.
 
-## Web pages are in the tree too
+## Reading data from the UI
 
-Every modern browser exposes the **rendered web page** through the AX tree — so Invoke
-can read and drive any website (Safari, Chrome, etc.), which is hugely powerful since so
-many apps are web tech with similar trees. The catch is **noise**: a real page's AX tree
-is enormous, and a naive deep `walk` of the whole window will bury you (and can be slow).
+Browsers expose the rendered web page through the AX tree, so you can read and drive any website — and big lists/tables need care, since a naive read of a huge list can hang. Both patterns (scraping a web page without drowning in noise, and reading a virtualized list via `visibleRows`) are in **`references/reading.md`** — read it when pulling on-screen data.
 
-Navigate it in layers instead of dumping it:
+## Waiting for the UI to change
 
-- The page content sits inside the browser window under a **web area** — drill
-  `window → … → scrollArea` (in Safari: `splitGroup → tabGroup → … → scrollArea`) with a
-  **shallow `-d`**, and read what's there before going deeper.
-- Web semantics map onto AX roles you can target directly: **landmarks** (`landmarkMain`,
-  `landmarkNavigation`, …), `heading`, `link`, `button`, `textField`. To get a page's
-  main items, walk into `landmarkMain` and read the `heading`/`link` elements rather than
-  every node.
-- Keep depth shallow and queries targeted; widen only where you need to. Treat it like
-  scraping a DOM: find the container, then read its meaningful children.
-
-## Big lists and tables
-
-Reading a `table` or `outline` row by row is slow: every attribute read is a separate round-trip to the app, and they add up — a list with many rows takes long enough to look frozen. How a list exposes its rows is app-specific, and both modes exist: some apps put a handle for **every** row in the tree (so `children`/`rows` can return hundreds), others put only the rows currently on screen. Either way, don't bulk-read a big list. Two rules:
-
-- **Don't read `children`/`rows` of a big table and loop over all of them.** If the element offers **`visibleRows`** (tables/outlines usually do; web and Electron lists often don't — the getter throws if absent), read that — only the rows on screen. To read more rows, **scroll** the list, then read again.
-- Do fewer reads per row. The per-row fields usually sit inside a content container under the row; `walk` one row first to learn that app's structure (it differs per app), then read that container's `children` once and read each child's `identifier` and `value` — instead of walking from the row to each field separately.
-
-## Waiting for the UI to change: prefer notifications over re-reading
-
-When the thing you want appears a moment _after_ an action — content loading, a page navigating, a value settling — it's usually better to wait for an AX notification than to loop re-reading or sleeping until it shows up. Such a loop tends to be slow and to read the UI while it's still half-drawn. Most apps post a notification when the change finishes, so the common pattern is: subscribe, trigger the change, wait for the notification, then read. If exploration shows the app posts nothing useful for a given change, a bounded re-read loop is a reasonable fallback.
-
-In a pack, `element` and `app` have a method **`.on(name, cb)`** that calls `cb` every time the notification `name` fires. It returns a function you call to stop listening. As one illustration, you could wrap it to await a single notification — treat this as a sketch to adapt, not a drop-in:
-
-```ts
-// resolve when `name` fires on `el`, or after `ms`
-function waitFor(el, name, ms) {
-	return new Promise((resolve) => {
-		let done = false;
-		const finish = (hit) => { if (done) return; done = true; clearTimeout(t); off().catch(() => {}); resolve(hit); };
-		const off = el.on(name, () => finish(true)); // .on() returns the unsubscribe fn
-		const t = setTimeout(() => finish(false), ms);
-	});
-}
-
-// Which notification fires (and on which element) is app-specific — explore to find it.
-// The element that POSTS it isn't always the one you read, so subscribing on the app is the safe default.
-// Subscribe BEFORE you trigger the change, or a fast update can fire before you're listening.
-const loaded = waitFor(app, "loadComplete", 5000); // `app` = your AppDelegate
-await row.setAttribute("selected", true);
-await loaded;
-const text = await content.value; // loaded now — read what you need
-```
-
-Useful names (full set in `invoke.d.ts` / `Notification`): **`loadComplete`** (web/HTML content finished loading — web views typically fire it), `selectedRowsChanged`, `layoutChanged`, `valueChanged`, `created`, `UIElementDestroyed`, `titleChanged`, `focusedUIElementChanged`. Stale notifications from a _previous_ state can arrive, so if correctness matters, **re-read on each event and accept only when the tree shows what you expect**, rather than trusting the first event.
-
-Caveat: listening needs the persistent pack runtime — a one-shot CLI `invoke element` command can't hold a subscription. So during live CLI exploration you _do_ re-run commands by hand; inside a pack, prefer a notification over a baked-in poll loop when one is available.
+Most UI updates are asynchronous: after an action (selecting a row, navigating a page), the content you want often renders a moment _later_. Prefer waiting for an **AX notification** — apps post one (e.g. `loadComplete`) when the change finishes — over a loop that re-reads or sleeps until it appears; such a loop is slow and can read half-drawn UI. (In a pack you subscribe with `.on(name, cb)`; from the one-shot CLI you can't hold a subscription, so there you re-run by hand.) The mechanics — a `waitFor` sketch, the notification names, the stale-event caveat — are in **`references/pack-api.md`**.
 
 ## Invoke is one tool among many
 
@@ -340,34 +292,21 @@ not `up`/`down`/`delta`. The function names the user-level concept; the ugly AX/
 hides inside. **`Vars`** are named booleans a pack exposes (e.g. `windowFocused`) that a
 caller can gate on — useful for context-sensitive shortcuts.
 
-### Pack gotchas (pack calls throw where the CLI stayed quiet)
+### Pack gotchas
 
-The CLI silently omits missing data; the pack API **throws**. Robust packs wrap reads.
-
-- **`walk()` rejects on no match** — despite its `Promise<Element | null>` type. Wrap optional lookups: `const x = await el.walk(step).catch(() => null)`.
-- **Attribute getters throw `AttributeUnsupported` (-25205)** when the element lacks that attribute (e.g. `.value` on a group). Guard every read you're not certain of: `const v = await el.value.catch(() => null)`. (From the CLI this is invisible — `walk` just omits the attribute.)
-- **Table/outline rows often don't offer `pick`/`press`.** (Mail's message rows, for example, offer only Unread/Remind Me/Delete, and `pick()` throws `ActionUnsupported` (-25206).) To select such a row, you can **set its `selected` attribute** (`row.setAttribute("selected", true)`); a single-select list replaces the selection. Running `element actions` first shows what an element actually offers, rather than assuming. (`setAttribute` lives on a resolved `Element` — a row from `visibleRows`, or `await someDelegate.element` — not on the lazy `.$()` delegate.)
-- **`pack run` double-encodes the return value**: a returned object arrives as a JSON string inside the NDJSON line — parse twice (`JSON.parse(JSON.parse(line))`).
-- **Packs are pure AX, sandboxed** — no `osascript`/subprocess escape hatch even when an app has a great scripting dictionary. Keep pack logic inside the `invoke` runtime.
-- **Debugging:** `console.error` from a pack doesn't reliably surface. To inspect state, **`throw new Error(JSON.stringify(...))`** and read it off the failed run.
-- **Module state persists** across `pack run` calls (the daemon keeps the instance), and edits need `pack reload` — so leaked subscriptions/caches survive between calls.
-
-### When a pack misbehaves
-
-Packs run **sandboxed** (Seatbelt). If a pack's filesystem/network access is being
-denied, see what was blocked:
-
-```sh
-invoke sandbox log    # recent Seatbelt denials for pack processes (last ~10 min)
-```
+The pack runtime **throws** where the CLI stayed quiet — `walk()` rejects on no match, reading an absent attribute throws — so robust packs wrap reads in `.catch()`. Other traps: rows often can't be `pick`/`press`'d (select via the `selected` attribute), `pack run` double-encodes its output, packs are sandboxed (`invoke sandbox log` shows denials), and module state persists between calls. The full list with workarounds is in **`references/pack-api.md`** — read it before authoring.
 
 ## Reference
 
 - `references/vocabulary.md` — the full camelCase vocabulary: roles, subroles, the
   attribute names usable in queries and `get`/`set`, and the actions `perform` accepts.
   Read it when a query isn't matching or you're unsure of an exact name.
-- `references/pack-api.md` — the pack-authoring TypeScript API (the `invoke` module),
-  distilled and verified. Read it before writing or editing a pack.
+- `references/reading.md` — patterns for pulling on-screen data: scraping web pages in
+  the tree, and reading big/virtualized lists without hanging. Read it when extracting
+  data from a UI.
+- `references/pack-api.md` — the pack-authoring TypeScript API (the `invoke` module):
+  querying, actions, attributes, events, waiting on notifications, and the pack gotchas.
+  Read it before writing or editing a pack.
 
 ## Error codes you'll see
 
