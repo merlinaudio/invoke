@@ -23,6 +23,9 @@ wildmatch = { version = "2", optional = true }
 
 smallvec = { version = "1.15.1", features = ["serde"], optional = true }
 
+[dev-dependencies]
+tokio = { version = "1.47.1", features = ["sync", "rt", "macros"] }
+
 [features]
 default = ["serde", "specta", "schemars", "accessibility", "main-thread"]
 serde = ["dep:serde", "dep:serde_json"]

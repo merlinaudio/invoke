@@ -120,6 +120,14 @@ impl Pack {
 		self.pending.complete(id, response);
 	}
 
+	/// The pack's transport disconnected: no response will ever arrive, so fail
+	/// every in-flight `request` (each resolves to `Error::Closed`). Without this,
+	/// a waiter holding an `Arc<Pack>` would pin the pack alive while awaiting a
+	/// response only the dead process could send.
+	pub fn fail_pending(&self) {
+		self.pending.fail_all();
+	}
+
 	/// Answer one inbound request.
 	pub(super) fn respond(&self, id: u32, response: Response) {
 		let (status, body) = match response {

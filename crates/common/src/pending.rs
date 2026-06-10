@@ -37,6 +37,12 @@ impl<T> Pending<T> {
 		receiver.await.map_err(|_| ())
 	}
 
+	/// Fail every waiter: dropping their senders wakes each `issue` with `Err(())`.
+	/// For when no response can ever arrive — the responder disconnected.
+	pub fn fail_all(&self) {
+		self.waiting.lock().unwrap().clear();
+	}
+
 	/// Deliver a response to whoever is awaiting `id`.
 	pub fn complete(&self, id: u32, value: T) {
 		if let Some(sender) = self.waiting.lock().unwrap().remove(&id) {
@@ -59,5 +65,27 @@ impl<T> Drop for Pending<T> {
 impl<T> Default for Pending<T> {
 	fn default() -> Self {
 		Self::new()
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	/// A waiter parked in `issue` must wake with `Err` when `fail_all` runs —
+	/// not stay parked forever (the reload-mid-run hang this method exists for).
+	#[tokio::test]
+	async fn fail_all_wakes_waiters() {
+		let pending = Pending::<u32>::new();
+		let waiter = pending.issue(|_| {});
+		let failer = async { pending.fail_all() };
+		assert_eq!(tokio::join!(waiter, failer).0, Err(()));
+	}
+
+	#[tokio::test]
+	async fn complete_still_delivers() {
+		let pending = Pending::<u32>::new();
+		let waiter = pending.issue(|id| pending.complete(id, 7));
+		assert_eq!(waiter.await, Ok(7));
 	}
 }

@@ -221,6 +221,9 @@ async fn read_loop(host: Arc<Host>, pack: Arc<Pack>, reader: OwnedReadHalf) {
 			}
 		}
 	}
+
+	// EOF: the pack process is gone, so no in-flight request can complete.
+	pack.fail_pending();
 }
 
 async fn write_loop(mut writer: OwnedWriteHalf, mut outgoing: mpsc::UnboundedReceiver<Outgoing>) {
