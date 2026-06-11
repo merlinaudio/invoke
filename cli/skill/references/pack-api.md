@@ -178,7 +178,7 @@ The CLI silently omits missing data; the pack API **throws**. Robust packs wrap 
 - **`pack run` double-encodes the return value**: a returned object arrives as a JSON string inside the NDJSON line — parse twice (`JSON.parse(JSON.parse(line))`).
 - **Packs are pure AX, sandboxed** — no `osascript`/subprocess escape hatch even when an app has a great scripting dictionary. Keep pack logic inside the `invoke` runtime.
 - **Debugging:** `console.error` from a pack doesn't reliably surface. To inspect state, **`throw new Error(JSON.stringify(...))`** and read it off the failed run.
-- **Module state persists** across `pack run` calls (the daemon keeps the instance), and edits need `pack reload` — so leaked subscriptions/caches survive between calls.
+- **Module state persists** across `pack run` calls (the daemon keeps the instance) — so leaked subscriptions/caches survive between calls. But if any pack file changed, the next command remounts first (fresh process, state gone).
 
 Packs run **sandboxed** (Seatbelt). If filesystem/network access is denied, `invoke sandbox log` shows recent Seatbelt denials for pack processes (last ~10 min).
 

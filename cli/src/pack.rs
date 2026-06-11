@@ -101,7 +101,7 @@ pub enum Command {
 	Path(PackRef),
 	Mount(PackRef),
 	Unmount(PackRef),
-	Reload(PackRef),
+	Remount(PackRef),
 }
 
 /// create a local pack scaffold and print its index.ts path
@@ -298,7 +298,7 @@ pub fn run(opts: Opts) -> Result {
 			pack: p.pack,
 		}
 		.request(&mut conn)?,
-		Command::Reload(p) => Request::Reload {
+		Command::Remount(p) => Request::Remount {
 			publisher: p.publisher,
 			pack: p.pack,
 		}

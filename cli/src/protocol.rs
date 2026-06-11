@@ -22,7 +22,7 @@ pub enum Request {
 	Init { pack: String, manifest: Value },
 	Mount { publisher: Option<String>, pack: String },
 	Unmount { publisher: Option<String>, pack: String },
-	Reload { publisher: Option<String>, pack: String },
+	Remount { publisher: Option<String>, pack: String },
 	/// Names of the functions a mounted pack has registered.
 	Functions { publisher: Option<String>, pack: String },
 	Run {

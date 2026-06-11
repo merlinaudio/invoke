@@ -247,7 +247,7 @@ invoke pack list mypack                 # the functions a pack exposes
 invoke pack run mypack doThing          # run a function
 invoke pack run mypack doThing '"some json payload"'   # with a raw JSON arg
 invoke pack path mypack                 # the pack's directory (raw, for cd "$(...)")
-invoke pack reload mypack               # re-read after editing index.ts
+invoke pack remount mypack              # force a remount (edits auto-remount on next run; rarely needed)
 ```
 
 Shorthand: `invoke <pack>` lists its functions, `invoke <pack> <fn> [payload]` runs one
@@ -256,7 +256,8 @@ Shorthand: `invoke <pack>` lists its functions, `invoke <pack> <fn> [payload]` r
 ### Writing a pack
 
 The capture loop: `pack init` → fill in `index.ts` → `pack run` to **verify it actually
-works end-to-end** → `pack reload` after edits. Don't consider a pack done until you've
+works end-to-end**. Edits are picked up automatically — the next `pack run` remounts a
+changed pack before running. Don't consider a pack done until you've
 run its function and seen the operation happen — determinism is the whole value, so
 prove it.
 

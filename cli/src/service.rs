@@ -220,6 +220,9 @@ fn status() -> Result {
 struct Mount {
 	_process: Process,
 	functions: Arc<Mutex<Vec<String>>>,
+	/// Newest mtime under the pack root when this mount started.
+	/// `remount_if_stale` compares against a fresh scan to auto-reload edits.
+	mtime: Option<std::time::SystemTime>,
 }
 
 /// Where a mounted pack's stdout lands: a deterministic per-pack-name file in
@@ -383,13 +386,13 @@ impl Orchestrator {
 			}
 			Request::Mount { publisher, pack } => self.mount(self.resolve(publisher, &pack)?, pack).await,
 			Request::Unmount { publisher, pack } => self.unmount(&PackId::new(self.resolve(publisher, &pack)?, &pack)),
-			Request::Reload { publisher, pack } => {
+			Request::Remount { publisher, pack } => {
 				let publisher = self.resolve(publisher, &pack)?;
-				let _ = self.unmount(&PackId::new(&publisher, &pack));
-				self.mount(publisher, pack).await
+				self.remount(PackId::new(publisher, pack)).await
 			}
 			Request::Functions { publisher, pack } => {
 				let id = PackId::new(self.resolve(publisher, &pack)?, &pack);
+				self.remount_if_stale(&id).await?;
 				self.mounts
 					.lock()
 					.unwrap()
@@ -404,6 +407,7 @@ impl Orchestrator {
 				payload,
 			} => {
 				let id = PackId::new(self.resolve(publisher, &pack)?, &pack);
+				self.remount_if_stale(&id).await?;
 				let pack = self.host.get(&id).ok_or_else(|| not_mounted(&id))?;
 				// The pack runtime's `payload` is an opaque, separately-encoded JSON string
 				// (it re-parses with a reviver that rebuilds Element handles). The CLI's
@@ -518,7 +522,10 @@ impl Orchestrator {
 			.await
 			.map_err(|e| e.to_string())?;
 
-		self.mounts.lock().unwrap().insert(id.clone(), Mount { _process: process, functions });
+		// Scanned before the spawn settles so an edit racing the mount errs toward
+		// one redundant remount rather than a missed one.
+		let mtime = newest_mtime(&root);
+		self.mounts.lock().unwrap().insert(id.clone(), Mount { _process: process, functions, mtime });
 
 		// `spawn` returns as soon as the pack's socket connects — before the pack
 		// runtime has executed its entrypoint and registered its functions. Wait
@@ -533,6 +540,27 @@ impl Orchestrator {
 		Ok(Value::Bool(true))
 	}
 
+	/// Unmount, then mount: the CLI's `Remount` request and `remount_if_stale`
+	/// both land here.
+	async fn remount(self: &Arc<Self>, id: PackId) -> HandlerResult {
+		let _ = self.unmount(&id);
+		self.mount(id.publisher_domain, id.pack_name).await
+	}
+
+	/// The dev loop's auto-reload: if anything under the pack root changed since
+	/// the pack was mounted, remount it before serving the command. No watchers —
+	/// staleness is only ever observed at command time, so checking here is
+	/// exactly as fresh. Not mounted (or unreadable mtimes) → nothing to do.
+	async fn remount_if_stale(self: &Arc<Self>, id: &PackId) -> std::result::Result<(), String> {
+		let Some(mounted) = self.mounts.lock().unwrap().get(id).and_then(|mount| mount.mtime) else {
+			return Ok(());
+		};
+		if newest_mtime(&self.pack_dir(&id.publisher_domain, &id.pack_name)) > Some(mounted) {
+			self.remount(id.clone()).await?;
+		}
+		Ok(())
+	}
+
 	/// Drop the launcher guard (kills the child) and stop exposing the pack.
 	fn unmount(&self, id: &PackId) -> HandlerResult {
 		if self.mounts.lock().unwrap().remove(id).is_none() {
@@ -541,6 +569,21 @@ impl Orchestrator {
 		self.host.remove(id);
 		Ok(Value::Null)
 	}
+}
+
+/// Newest mtime of anything under `path`, directories included — a create or
+/// delete bumps the parent directory's mtime, so those count as changes too.
+/// `symlink_metadata` so a symlink is stat'd, not followed (no cycles, no
+/// reaching outside the pack root). Unreadable entries are skipped.
+fn newest_mtime(path: &Path) -> Option<std::time::SystemTime> {
+	let meta = std::fs::symlink_metadata(path).ok()?;
+	let mut newest = meta.modified().ok();
+	if meta.is_dir() {
+		for entry in std::fs::read_dir(path).ok()?.flatten() {
+			newest = newest.max(newest_mtime(&entry.path()));
+		}
+	}
+	newest
 }
 
 fn not_mounted(id: &PackId) -> String {

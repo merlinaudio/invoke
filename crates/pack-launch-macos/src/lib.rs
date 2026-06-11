@@ -42,7 +42,6 @@ pub struct Process {
 	socket: PathBuf,
 }
 
-
 impl Drop for Process {
 	fn drop(&mut self) {
 		_ = self.child.kill();
@@ -207,7 +206,7 @@ async fn read_loop(host: Arc<Host>, pack: Arc<Pack>, reader: OwnedReadHalf) {
 	loop {
 		let line = match lines.next_line().await {
 			Ok(Some(line)) => line,
-			Ok(None) => break,
+			Ok(None) => break, // EOF. pack process ended.
 			Err(error) => {
 				log::warn!("pack socket read failed: {error}");
 				break;
