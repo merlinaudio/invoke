@@ -231,8 +231,8 @@ struct Mount {
 /// (launchd-style), so nothing drains a pipe; `invoke logs` opens this path
 /// directly without asking the daemon. Keyed by pack name alone so the CLI can
 /// compute it pre-resolution; same-named packs from two publishers share it.
-pub fn log_path(pack: &str) -> PathBuf {
-	temp_dir().join(format!("invoke-pack-{pack}.log"))
+pub fn log_path(pack_name: &str) -> PathBuf {
+	temp_dir().join(format!("invoke-pack-{pack_name}.log"))
 }
 
 struct Orchestrator {
@@ -413,7 +413,9 @@ impl Orchestrator {
 				// (it re-parses with a reviver that rebuilds Element handles). The CLI's
 				// `--payload` is already serialized JSON text, so pass it straight through;
 				// absent → the string "null".
-				let result = pack.run_function(&function, Value::String(payload.unwrap_or_else(|| "null".to_owned()))).await?;
+				let result = pack
+					.run_function(&function, Value::String(payload.unwrap_or_else(|| "null".to_owned())))
+					.await?;
 				// The result comes back the same way — a separately-encoded JSON string.
 				// Decode it here so clients get plain JSON, not a string of JSON.
 				Ok(match result {
@@ -540,7 +542,14 @@ impl Orchestrator {
 		// Scanned before the spawn settles so an edit racing the mount errs toward
 		// one redundant remount rather than a missed one.
 		let mtime = newest_mtime(&root);
-		self.mounts.lock().unwrap().insert(id.clone(), Mount { _process: process, functions, mtime });
+		self.mounts.lock().unwrap().insert(
+			id.clone(),
+			Mount {
+				_process: process,
+				functions,
+				mtime,
+			},
+		);
 
 		// `spawn` returns as soon as the pack's socket connects — before the pack
 		// runtime has executed its entrypoint and registered its functions. Wait

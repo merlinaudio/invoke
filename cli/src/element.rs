@@ -9,6 +9,7 @@ use common::accessibility::{
 	sort_direction::SortDirection,
 	subrole::Subrole,
 };
+use objc2_core_foundation::{CFBoolean, CFNumber};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as Json;
 
@@ -81,7 +82,13 @@ pub struct GetOpts {
 /// Set an attribute value on an element.
 ///
 ///   invoke element set com.app.id '[{"role": "textField"}]' value "hello"
+///   invoke element set com.app.id '[{"role": "row"}]' selected true
 ///   invoke element perform ... | invoke element set value "hello"
+///
+/// The value is parsed as JSON when possible, so `true`/`false` and numbers
+/// are sent with their real types (AX rejects a wrongly-typed value, often as
+/// IllegalArgument). Anything else is sent as a string; quote as JSON
+/// (`'"true"'`) to force the literal string.
 #[derive(Args)]
 pub struct SetOpts {
 	/// app bundle ID, JSON query path, attribute name, and value
@@ -122,7 +129,14 @@ fn exec(command: Command) -> Result<Json> {
 		Command::Set(o) => {
 			let (app, query, rest) = resolve(o.args, 2)?;
 			let attr: Attribute = rest[0].parse().err_code("UnknownAttribute")?;
-			walk(&app, &query)?.set_string_attribute(&attr, &rest[1]).err_code("SetAttribute")?;
+			let el = walk(&app, &query)?;
+			match serde_json::from_str(&rest[1]) {
+				Ok(Json::Bool(b)) => el.set_attribute(&attr, CFBoolean::new(b)),
+				Ok(Json::Number(n)) => el.set_attribute(&attr, &CFNumber::new_f64(n.as_f64().unwrap())),
+				Ok(Json::String(s)) => el.set_string_attribute(&attr, &s),
+				_ => el.set_string_attribute(&attr, &rest[1]),
+			}
+			.err_code("SetAttribute")?;
 			Ok(descriptor(app, query))
 		}
 		Command::Perform(o) => {

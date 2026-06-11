@@ -8,7 +8,7 @@ use hid::{
 	keyboard::{Accelerator, Key, Modifiers},
 	mouse::{MouseButton, ScrollWheel},
 };
-use objc2_core_foundation::{CFBoolean, CFNumber, CFString, CFType, Type};
+use objc2_core_foundation::{CFBoolean, CFNumber, CFString};
 
 #[derive(Debug)]
 pub enum Error {
@@ -148,12 +148,6 @@ impl Instruction for GetAttribute {
 	}
 }
 
-/// Cast any CF type to &CFType (same pattern as value.rs tests)
-fn as_cftype<T: Type>(v: &T) -> &CFType {
-	let ptr: *const T = v;
-	unsafe { &*ptr.cast::<CFType>() }
-}
-
 impl Instruction for SetAttribute {
 	type Value = Result<(), Error>;
 
@@ -161,15 +155,9 @@ impl Instruction for SetAttribute {
 		let element: Element = self.element.try_into().map_err(Error::Element)?;
 
 		match &self.value {
-			SetAttributeValue::Number(n) => {
-				let cf = CFNumber::new_f64(*n);
-				element.set_attribute(&self.attribute, as_cftype(&*cf))
-			}
-			SetAttributeValue::Bool(b) => element.set_attribute(&self.attribute, as_cftype(CFBoolean::new(*b))),
-			SetAttributeValue::String(s) => {
-				let cf = CFString::from_str(s);
-				element.set_attribute(&self.attribute, as_cftype(&*cf))
-			}
+			SetAttributeValue::Number(n) => element.set_attribute(&self.attribute, &CFNumber::new_f64(*n)),
+			SetAttributeValue::Bool(b) => element.set_attribute(&self.attribute, CFBoolean::new(*b)),
+			SetAttributeValue::String(s) => element.set_attribute(&self.attribute, &CFString::from_str(s)),
 		}
 		.map_err(Error::Element)
 	}
