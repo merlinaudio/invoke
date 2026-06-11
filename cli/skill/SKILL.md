@@ -242,7 +242,8 @@ occurs.
 
 ```sh
 invoke pack init mypack -n "My App"     # scaffold; prints the new index.ts path
-invoke pack list                        # all installed packs, by publisher
+invoke pack list                        # { pack: functions } per installed pack ("unmounted" if not running)
+invoke pack list --full                 # full manifests by publisher, each with a functions field
 invoke pack list mypack                 # the functions a pack exposes
 invoke pack run mypack doThing          # run a function
 invoke pack run mypack doThing '"some json payload"'   # with a raw JSON arg

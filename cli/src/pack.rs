@@ -122,6 +122,9 @@ pub struct ListOpts {
 	publisher: Option<String>,
 	/// optional pack name
 	pack: Option<String>,
+	/// full manifests (`{ publisher: { pack: manifest } }`) instead of just functions
+	#[arg(long)]
+	full: bool,
 }
 
 /// run a pack function
@@ -264,10 +267,12 @@ pub fn run(opts: Opts) -> Result {
 		Command::List(opts) => match opts.pack {
 			None => {
 				let all = Request::List.request(&mut conn)?;
-				match opts.publisher {
+				let filtered = opts.publisher.is_some();
+				let all = match opts.publisher {
 					None => all,
 					Some(publisher) => all.get(&publisher).cloned().unwrap_or(Value::Null),
-				}
+				};
+				if opts.full { all } else { functions_view(all, filtered) }
 			}
 			Some(pack) => {
 				ensure_mounted(&mut conn, opts.publisher.clone(), &pack)?;
@@ -307,6 +312,30 @@ pub fn run(opts: Opts) -> Result {
 	pipe::write_json_line(&result)
 }
 
+/// `{ pack: functions }` distilled from the daemon's listing — either
+/// `{ publisher: { pack: manifest } }` or, when `publisher_filtered`, one
+/// publisher's `{ pack: manifest }`.
+fn functions_view(listing: Value, publisher_filtered: bool) -> Value {
+	let Value::Object(top) = listing else { return listing };
+	let packs: serde_json::Map<String, Value> = if publisher_filtered {
+		top
+	} else {
+		top.into_values()
+			.filter_map(|packs| match packs {
+				Value::Object(packs) => Some(packs),
+				_ => None,
+			})
+			.flatten()
+			.collect()
+	};
+	Value::Object(
+		packs
+			.into_iter()
+			.map(|(pack, manifest)| (pack, manifest.get("functions").cloned().unwrap_or(Value::Null)))
+			.collect(),
+	)
+}
+
 /// Catchall handler for `invoke <pack> [function] [payload]`. One arg lists functions;
 /// two or three args run the function. More args are an error.
 pub fn run_catchall(args: Vec<String>) -> Result {
@@ -315,6 +344,7 @@ pub fn run_catchall(args: Vec<String>) -> Result {
 			command: Command::List(ListOpts {
 				publisher: None,
 				pack: Some(args.into_iter().next().unwrap()),
+				full: false,
 			}),
 		},
 		2 => {

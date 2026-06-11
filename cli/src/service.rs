@@ -428,7 +428,9 @@ impl Orchestrator {
 		self.packs_dir.join(publisher).join(pack)
 	}
 
-	/// `{ publisher: { pack: manifest } }` for every installed pack on disk.
+	/// `{ publisher: { pack: manifest } }` for every installed pack on disk, each
+	/// manifest extended with a `functions` field: the registered function names
+	/// if the pack is mounted, the string `"unmounted"` otherwise.
 	fn list(&self) -> Value {
 		let mut out = Map::new();
 		let Ok(publishers) = std::fs::read_dir(&self.packs_dir) else {
@@ -436,20 +438,33 @@ impl Orchestrator {
 		};
 		for publisher in publishers.flatten() {
 			let Ok(packs) = std::fs::read_dir(publisher.path()) else { continue };
+			let publisher = publisher.file_name().to_string_lossy().into_owned();
 			let mut entries = Map::new();
 			for pack in packs.flatten() {
 				let manifest = pack.path().join("pack.json");
 				if let Ok(text) = std::fs::read_to_string(&manifest)
-					&& let Ok(value) = serde_json::from_str::<Value>(&text)
+					&& let Ok(Value::Object(mut value)) = serde_json::from_str::<Value>(&text)
 				{
-					entries.insert(pack.file_name().to_string_lossy().into_owned(), value);
+					let name = pack.file_name().to_string_lossy().into_owned();
+					value.insert("functions".to_owned(), self.functions(&PackId::new(&publisher, &name)));
+					entries.insert(name, Value::Object(value));
 				}
 			}
 			if !entries.is_empty() {
-				out.insert(publisher.file_name().to_string_lossy().into_owned(), Value::Object(entries));
+				out.insert(publisher, Value::Object(entries));
 			}
 		}
 		Value::Object(out)
+	}
+
+	/// The function names a mounted pack registered, or `"unmounted"`.
+	fn functions(&self, id: &PackId) -> Value {
+		self.mounts
+			.lock()
+			.unwrap()
+			.get(id)
+			.map(|mount| Value::from(mount.functions.lock().unwrap().clone()))
+			.unwrap_or_else(|| Value::from("unmounted"))
 	}
 
 	/// Resolve `publisher`. If given, returned as-is. Otherwise find the sole
