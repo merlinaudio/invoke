@@ -668,9 +668,17 @@ export class ElementDelegate {
 		return current;
 	}
 
-	get element() {
-		this.#element ??= this.app.walk(...(this.path ?? [])).then(el => el ?? Promise.reject(new Error("Element not found")));
-		return this.#element;
+	// Cache the walk only once it succeeds. A rejected walk is never stored, so a
+	// failed lookup (e.g. after the app relaunches) can't poison the cache — the
+	// next access just walks again. Concurrent callers share the one in-flight walk.
+	get element(): Promise<Element> {
+		return (this.#element ??= this.app
+			.walk(...(this.path ?? []))
+			.then(el => el ?? Promise.reject(new Error("Element not found")))
+			.catch(e => {
+				this.#element = undefined;
+				throw e;
+			}));
 	}
 
 	$ = (...path: FilterStep[]) => new ElementDelegate(this, path);
