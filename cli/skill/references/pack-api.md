@@ -87,14 +87,25 @@ const lang = await (await finder.element)!.getAttribute("AXPreferredLanguage");
 await field.setAttribute("value", "hello"); // settable attrs only (value, focus, …)
 ```
 
+Geometry/range attributes read and write as plain objects with the same shape in both
+directions: `position` is `{x, y}`, `size` is `{width, height}`, `frame` is
+`{x, y, width, height}`, `selectedTextRange` is `{location, length}`. So
+`area.setAttribute("selectedTextRange", { location: 0, length: 5 })` selects text, and
+what `getAttribute` returns can be passed back to `setAttribute` unchanged. `url` reads
+as a string.
+
 `.walk(...steps)` resolves an element imperatively (returns `Promise<Element | null>`),
 useful when you need to search dynamically (e.g. across all windows) rather than bind a
 static lazy path. Note `.walk()`/`.$()` don't backtrack across siblings — a static path
 only descends the first matching branch.
 
-## Simulated input (the HID escape hatch)
+## Simulated input (the HID escape hatch — last resort)
 
-Prefer element actions above; reach for keys only when no element exposes the operation.
+Reach for keys only when no element exposes the operation. Key events need the app
+focused (a pack that uses them can't run in the background and steals the user's
+focus), are localized/layout-remapped across machines, and land on whatever has focus
+rather than the element you meant. Check the menu bar first — most shortcuts have a
+menu item, and pressing it via AX (`menubar()` below) works backgrounded.
 
 ```ts
 await finder.key.press("cmd+n"); // press combo
@@ -139,6 +150,14 @@ finder.onactivate = () => {
 
 macOS only fires `focusedUIElementChanged` for focus moves _within_ an app, never when
 you switch _into_ it — re-read `focusedUIElement` on `onactivate` if you gate on focus.
+Two more focus-event traps (both hit in the abletonlive pack):
+
+- Don't trust `event.element` — some apps fire `focusedUIElementChanged` reporting the
+  bare window while a text field actually holds focus. Re-read the app's
+  `focusedUIElement` in the handler instead.
+- Clicking into a floating window (plugin windows, inspectors) doesn't always fire
+  `focusedUIElementChanged` at all — subscribe to **`focusedWindowChanged`** too when
+  focus gating matters.
 
 ## Waiting for the UI to change: prefer notifications over re-reading
 
@@ -167,6 +186,16 @@ const text = await content.value; // loaded now — read what you need
 ```
 
 Useful names (full set in `invoke.d.ts` / `Notification`): **`loadComplete`** (web/HTML content finished loading — web views typically fire it), `selectedRowsChanged`, `layoutChanged`, `valueChanged`, `created`, `UIElementDestroyed`, `titleChanged`, `focusedUIElementChanged`. Stale notifications from a _previous_ state can arrive, so if correctness matters, **re-read on each event and accept only when the tree shows what you expect**, rather than trusting the first event.
+
+## Patterns proven in shipped packs
+
+Recurring problems and the shapes that solved them — reach for these before inventing:
+
+- **Generation counter for racing async updates.** Event handlers that gather state with several awaited reads can interleave; an older handler can finish *after* a newer one and clobber fresh state. Stamp each run (`const gen = ++update.generation`) and discard its writes if `gen !== update.generation` at the end.
+- **Window-scoped Vars.** Focus vars (e.g. `arrangementFocused`) must go false when focus moves to a *different window* — a plugin window, a dialog. Gate them on the focused element's window `subrole`: anything `!== "AXStandardWindow"` should read as "user is typing elsewhere" (set your input/text flag true so shortcuts stop firing into it).
+- **Retry-once on navigation staleness.** The first read after a page/document change can serve a stale cached element (or throw on an invalidated one). One recursive retry self-heals: `async function f(retried = false) { …; if (bad && !retried) return f(true); }`.
+- **Settle delay before re-reads.** Web/async UIs apply `increment`/`setAttribute` after returning; an immediate read sees the old value. ~80ms before the verification read.
+- **State-tolerant glob anchors** for buttons whose title changes with state — anchor on the stable part (`"*(k)"` matches Play/Pause/Replay; `"Subscribe to*"` survives channel names).
 
 ## Gotchas (pack calls throw where the CLI stayed quiet)
 

@@ -98,6 +98,18 @@ truncated branch for a leaf — walk deeper there if you need it.
 (`... title value`) it returns exactly those (keeping nulls, so you can tell an
 attribute exists but is unset).
 
+Two force-multipliers for the explore phase:
+
+- **Mine the menu bar first.** An app's menus enumerate without opening them — titles, enabled state, keyboard shortcuts — and menu items can be pressed even in the background. It's the app's complete command surface in one dump; check it before hunting the window tree. Recipe in `references/native-apps.md`.
+- **Locating in a deep tree:** dump once and search offline — `invoke element walk com.app.id -d 25 > /tmp/tree.json`, then `jq 'paths(. == "Seek slider")' /tmp/tree.json`. Caveat: that gives a *positional* path, and the query language has no index step — you still need to find attribute anchors along the path to express it as a query. Use the dump to learn where the element lives and what's matchable around it, not as an address.
+
+## Know the app's archetype
+
+What works in one app fails in another for framework reasons, not app reasons. After your first shallow walk, identify what you're driving and read the matching reference:
+
+- A browser, or an app built on web tech (Electron/CEF — Spotify, VS Code, …): **`references/web.md`**. Critical there: several engines need a wake-up poke before they expose anything, and value writes into web content silently no-op.
+- A native app (SwiftUI, Catalyst, terminals, PDFs, hybrid native/web, menu-bar apps): **`references/native-apps.md`**. Critical there: SwiftUI roles lie (buttons with no actions — check `element actions` before trusting `role`), and an empty-looking or erroring tree often means "wake the app" rather than "nothing there".
+
 ## Write queries that don't break
 
 This is the heart of using Invoke well. A query is like a CSS selector: it _can_ be
@@ -179,6 +191,17 @@ invoke element set com.app.id '[{"role": "textField"}]' value "hi"  # write an a
 invoke element perform com.app.id '[{"role": "button", "title": "Play"}]' press  # do an action
 ```
 
+Values are typed: bare `true`/`false` and numbers are sent as bool/number, and JSON
+objects shaped like `{"x","y"}`, `{"width","height"}`, `{"x","y","width","height"}`, or
+`{"location","length"}` become the structs that `position`/`size`/`frame`/
+`selectedTextRange` expect — the same shapes `get` emits, so `get | set` round-trips:
+
+```sh
+invoke element get com.app.id '[{"role": "window"}]' position size   # → {"position":{"x":376.0,"y":121.0},...}
+invoke element set com.app.id '[{"role": "window"}]' position '{"x": 400, "y": 140}'   # move a window
+invoke element set com.app.id '[... textArea]' selectedTextRange '{"location": 0, "length": 5}'  # select text
+```
+
 `set` and `perform` print a **descriptor** (`{"a": "<app>", "q": "<query>"}`) instead
 of a value — a handle to the element you just acted on. Pipe it into the next command
 to keep operating on the same element without repeating the bundle ID and query:
@@ -209,12 +232,22 @@ With `--app`, the event is delivered to that app's process; without it, it's a
 system-wide HID event. Combos use `+`: modifiers are `cmd`/`command`, `ctrl`/`control`,
 `opt`/`option`/`alt`, `shift`.
 
-**Prefer manipulating elements directly (`perform`/`set`) over simulating input.**
-HID events usually require the app to be focused, and apps localize shortcuts or remap
-them by keyboard layout — so `key press` is fragile across machines. A `button.press`
-on the right element is precise and locale-independent. Use `key`/`scroll` only when no
-AX element exposes the operation (canvas interactions, app-specific shortcuts with no
-menu equivalent).
+**Treat `key` as a last resort — manipulate elements (`perform`/`set`) first.**
+Simulated keys are the fragile path on every axis that matters:
+
+- They need the app **focused** — background automation breaks, and foreground use
+  steals focus from whatever the user is doing mid-run.
+- Shortcuts are **localized and layout-remapped** — `cmd+z` isn't undo on every
+  keyboard, menu shortcuts differ per language. A `press` on the right element is
+  exact, works in the background, and is locale-independent.
+- A key press is **aimed at whatever happens to have focus** — if focus isn't where
+  you assumed, you just typed into the wrong place. An element action can't miss.
+
+Before reaching for a shortcut, check the **menu bar**: nearly every shortcut has a
+menu item, and pressing a menu item via AX works even while the app is backgrounded
+(see `references/native-apps.md` for menu mining). Legitimate `key`/`scroll` uses are
+the cases with no AX surface at all: canvas interactions, typing into terminals,
+app shortcuts with no menu equivalent.
 
 ## Packs: capturing operations as deterministic functions
 
@@ -249,6 +282,7 @@ invoke pack run mypack doThing          # run a function
 invoke pack run mypack doThing '"some json payload"'   # with a raw JSON arg
 invoke pack path mypack                 # the pack's directory (raw, for cd "$(...)")
 invoke pack remount mypack              # force a remount (edits auto-remount on next run; rarely needed)
+invoke logs mypack                      # the pack's stdout/stderr (-f to follow) — first stop when debugging
 ```
 
 Shorthand: `invoke <pack>` lists its functions, `invoke <pack> <fn> [payload]` runs one
@@ -306,9 +340,15 @@ The pack runtime **throws** where the CLI stayed quiet — `walk()` rejects on n
 - `references/reading.md` — patterns for pulling on-screen data: scraping web pages in
   the tree, and reading big/virtualized lists without hanging. Read it when extracting
   data from a UI.
+- `references/web.md` — driving browsers and web-engine apps (Electron/CEF): waking
+  dormant accessibility trees, per-browser navigation, web controls that ignore writes,
+  engine quirks. Read it before automating anything web-rendered.
+- `references/native-apps.md` — what each native framework's tree looks like (SwiftUI,
+  Catalyst, terminals, PDFs, hybrids, menu-bar apps) and the menu-mining recipe. Read it
+  when an app's tree behaves unexpectedly or before deep exploration.
 - `references/pack-api.md` — the pack-authoring TypeScript API (the `invoke` module):
-  querying, actions, attributes, events, waiting on notifications, and the pack gotchas.
-  Read it before writing or editing a pack.
+  querying, actions, attributes, events, waiting on notifications, the pack gotchas, and
+  patterns proven in shipped packs. Read it before writing or editing a pack.
 
 ## Error codes you'll see
 
@@ -319,3 +359,10 @@ The pack runtime **throws** where the CLI stayed quiet — `walk()` rejects on n
   does offer. Run `element actions` first.
 - `UnknownAttribute` / `BadQuery` / `BadFilter` — malformed query JSON or a misspelled
   attribute/role name.
+
+Raw `AXError` numbers also surface; the ones worth knowing:
+
+- `-25204` — app isn't responding to AX (usually App Nap). Not broken: activate it (`open -a`) and retry.
+- `-25201` — stale element / tree mutated mid-walk (page loading, UI animating). Retry the same command.
+- `-25205` — the element doesn't support that attribute.
+- `-25208` — attribute not settable… except the web-engine wake-up pokes, which error this way *and still work* (see `references/web.md`).
